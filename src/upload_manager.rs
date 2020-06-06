@@ -13,6 +13,7 @@ struct UploadManagerInner {
     hasher: sha2::Sha256,
     image_dir: PathBuf,
     db: sled::Db,
+    alias_tree: sled::Tree,
 }
 
 type UploadStream = Pin<Box<dyn Stream<Item = Result<bytes::Bytes, actix_form_data::Error>>>>;
@@ -56,6 +57,7 @@ impl UploadManager {
             inner: Arc::new(UploadManagerInner {
                 hasher: sha2::Sha256::new(),
                 image_dir: root_dir,
+                alias_tree: db.open_tree("alias")?,
                 db,
             }),
         })
@@ -86,19 +88,44 @@ impl UploadManager {
         // Cloning bytes is fine because it's actually a pointer
         let hash = self.hash(bytes.clone()).await?;
 
-        let (dup, path) = self.check_duplicate(hash, content_type).await?;
+        let alias = self.add_alias(&hash, content_type.clone()).await?;
+        let (dup, name) = self.check_duplicate(hash, content_type).await?;
 
-        // bail early with path to existing file if this is a duplicate
+        // bail early with alias to existing file if this is a duplicate
         if dup.exists() {
+            let mut path = PathBuf::new();
+            path.push(alias);
             return Ok(Some(path));
         }
 
         // TODO: validate image before saving
 
         // -- WRITE NEW FILE --
-        safe_save_file(path.clone(), bytes).await?;
+        let mut real_path = self.image_dir();
+        real_path.push(name);
 
+        safe_save_file(real_path, bytes).await?;
+
+        // Return alias to file
+        let mut path = PathBuf::new();
+        path.push(alias);
         Ok(Some(path))
+    }
+
+    pub(crate) async fn from_alias(&self, alias: String) -> Result<String, UploadError> {
+        let tree = self.inner.alias_tree.clone();
+        let hash = web::block(move || tree.get(alias.as_bytes()))
+            .await?
+            .ok_or(UploadError::MissingAlias)?;
+
+        let db = self.inner.db.clone();
+        let filename = web::block(move || db.get(hash))
+            .await?
+            .ok_or(UploadError::MissingFile)?;
+
+        let filename = String::from_utf8(filename.to_vec())?;
+
+        Ok(filename)
     }
 
     // produce a sh256sum of the uploaded file
@@ -118,12 +145,10 @@ impl UploadManager {
         &self,
         hash: Vec<u8>,
         content_type: mime::Mime,
-    ) -> Result<(Dup, PathBuf), UploadError> {
-        let mut path = self.inner.image_dir.clone();
+    ) -> Result<(Dup, String), UploadError> {
         let db = self.inner.db.clone();
 
         let filename = self.next_file(content_type).await?;
-
         let filename2 = filename.clone();
         let res = web::block(move || {
             db.compare_and_swap(hash, None as Option<sled::IVec>, Some(filename2.as_bytes()))
@@ -136,19 +161,15 @@ impl UploadManager {
         }) = res
         {
             let name = String::from_utf8(ivec.to_vec())?;
-            path.push(name);
-
-            return Ok((Dup::Exists, path));
+            return Ok((Dup::Exists, name));
         }
 
-        path.push(filename);
-
-        Ok((Dup::New, path))
+        Ok((Dup::New, filename))
     }
 
     // generate a short filename that isn't already in-use
     async fn next_file(&self, content_type: mime::Mime) -> Result<String, UploadError> {
-        let image_dir = self.inner.image_dir.clone();
+        let image_dir = self.image_dir();
         use rand::distributions::{Alphanumeric, Distribution};
         let mut limit: usize = 10;
         let rng = rand::thread_rng();
@@ -156,7 +177,7 @@ impl UploadManager {
             let mut path = image_dir.clone();
             let s: String = Alphanumeric.sample_iter(rng).take(limit).collect();
 
-            let filename = format!("{}{}", s, to_ext(content_type.clone()));
+            let filename = file_name(s, content_type.clone());
 
             path.push(filename.clone());
 
@@ -170,4 +191,70 @@ impl UploadManager {
             limit += 1;
         }
     }
+
+    // Add an alias to an existing file
+    //
+    // This will help if multiple 'users' upload the same file, and one of them wants to delete it
+    async fn add_alias(
+        &self,
+        hash: &[u8],
+        content_type: mime::Mime,
+    ) -> Result<String, UploadError> {
+        let alias = self.next_alias(hash, content_type).await?;
+
+        loop {
+            let db = self.inner.db.clone();
+            let id = web::block(move || db.generate_id()).await?.to_string();
+
+            let mut key = hash.to_vec();
+            key.extend(id.as_bytes());
+
+            let db = self.inner.db.clone();
+            let alias2 = alias.clone();
+            let res = web::block(move || {
+                db.compare_and_swap(key, None as Option<sled::IVec>, Some(alias2.as_bytes()))
+            })
+            .await?;
+
+            if res.is_ok() {
+                break;
+            }
+        }
+
+        Ok(alias)
+    }
+
+    // Generate an alias to the file
+    async fn next_alias(
+        &self,
+        hash: &[u8],
+        content_type: mime::Mime,
+    ) -> Result<String, UploadError> {
+        use rand::distributions::{Alphanumeric, Distribution};
+        let mut limit: usize = 10;
+        let rng = rand::thread_rng();
+        let hvec = hash.to_vec();
+        loop {
+            let s: String = Alphanumeric.sample_iter(rng).take(limit).collect();
+            let filename = file_name(s, content_type.clone());
+
+            let tree = self.inner.alias_tree.clone();
+            let vec = hvec.clone();
+            let filename2 = filename.clone();
+            let res = web::block(move || {
+                tree.compare_and_swap(filename2.as_bytes(), None as Option<sled::IVec>, Some(vec))
+            })
+            .await?;
+
+            if res.is_ok() {
+                return Ok(filename);
+            }
+
+            limit += 1;
+        }
+    }
+}
+
+fn file_name(name: String, content_type: mime::Mime) -> String {
+    format!("{}{}", name, to_ext(content_type))
 }

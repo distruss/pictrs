@@ -102,10 +102,11 @@ async fn upload(value: Value) -> Result<HttpResponse, UploadError> {
 /// Serve original files
 async fn serve(
     manager: web::Data<UploadManager>,
-    filename: web::Path<String>,
+    alias: web::Path<String>,
 ) -> Result<HttpResponse, UploadError> {
+    let filename = manager.from_alias(alias.into_inner()).await?;
     let mut path = manager.image_dir();
-    path.push(filename.into_inner());
+    path.push(filename);
 
     let ext = path
         .extension()
@@ -121,13 +122,14 @@ async fn serve(
 /// Serve resized files
 async fn serve_resized(
     manager: web::Data<UploadManager>,
-    filename: web::Path<(u32, String)>,
+    path_entries: web::Path<(u32, String)>,
 ) -> Result<HttpResponse, UploadError> {
     use image::GenericImageView;
 
     let mut path = manager.image_dir();
 
-    let (size, name) = filename.into_inner();
+    let (size, alias) = path_entries.into_inner();
+    let name = manager.from_alias(alias).await?;
     path.push(size.to_string());
     path.push(name.clone());
 

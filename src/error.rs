@@ -28,6 +28,12 @@ pub enum UploadError {
 
     #[error("Uploaded image could not be served, extension is missing")]
     MissingExtension,
+
+    #[error("Requested a file that doesn't exist")]
+    MissingAlias,
+
+    #[error("Alias directed to missing file")]
+    MissingFile,
 }
 
 impl From<actix_form_data::Error> for UploadError {
@@ -54,6 +60,7 @@ impl ResponseError for UploadError {
             UploadError::NoFiles | UploadError::ContentType(_) | UploadError::Upload(_) => {
                 StatusCode::BAD_REQUEST
             }
+            UploadError::MissingAlias => StatusCode::NOT_FOUND,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
