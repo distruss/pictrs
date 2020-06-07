@@ -53,6 +53,7 @@ FROM arm64v8/alpine:3.11
 
 ARG UID=991
 ARG GID=991
+ARG BINARY=pict-rs
 
 COPY --from=builder /opt/build/repo/target/aarch64-unknown-linux-musl/release/$BINARY /usr/bin/$BINARY
 
