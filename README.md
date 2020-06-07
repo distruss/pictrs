@@ -35,6 +35,24 @@ Running locally, port 8080, storing data in data/, and only allowing the `thumbn
 $ ./pict-rs -a 127.0.0.1:8080 -p data/ -w thumbnail identity
 ```
 
+#### Docker
+Run the following commands:
+```
+# Create a folder for the files (anywhere works)
+mkdir /pict-rs
+cd /pict-rs
+wget https://git.asonix.dog/asonix/pict-rs/raw/branch/master/docker/prod/docker-compose.yml
+sudo docker-compose up -d
+```
+
+#### Docker Development
+Run the following to develop in docker:
+```
+git clone https://git.asonix.dog/asonix/pict-rs
+cd pict-rs/docker/dev
+docker-compose up --build
+```
+
 ### API
 pict-rs offers four endpoints:
 - `POST /image` for uploading an image. Uploaded content must be valid multipart/form-data with an
