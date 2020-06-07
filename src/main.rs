@@ -8,11 +8,13 @@ use actix_web::{
 use futures::stream::{Stream, TryStreamExt};
 use log::{error, info};
 use std::path::PathBuf;
+use structopt::StructOpt;
 
+mod config;
 mod error;
 mod upload_manager;
 
-use self::{error::UploadError, upload_manager::UploadManager};
+use self::{config::Config, error::UploadError, upload_manager::UploadManager};
 
 const ACCEPTED_MIMES: &[mime::Mime] = &[
     mime::IMAGE_BMP,
@@ -234,8 +236,10 @@ where
 
 #[actix_rt::main]
 async fn main() -> Result<(), anyhow::Error> {
+    let config = Config::from_args();
+    std::env::set_var("RUST_LOG", "info");
     env_logger::init();
-    let manager = UploadManager::new("data/".to_string().into()).await?;
+    let manager = UploadManager::new(config.data_dir()).await?;
 
     // Create a new Multipart Form validator
     //
@@ -275,7 +279,7 @@ async fn main() -> Result<(), anyhow::Error> {
                     ),
             )
     })
-    .bind("127.0.0.1:8080")?
+    .bind(config.bind_address())?
     .run()
     .await?;
 
