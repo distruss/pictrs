@@ -203,19 +203,12 @@ impl UploadManager {
             (img, format)
         };
 
-        let format = self
+        let (format, content_type) = self
             .inner
             .format
             .as_ref()
-            .map(|f| f.to_image_format())
-            .unwrap_or(format);
-
-        let content_type = self
-            .inner
-            .format
-            .as_ref()
-            .map(|f| f.to_mime())
-            .unwrap_or(content_type);
+            .map(|f| (f.to_image_format(), f.to_mime()))
+            .unwrap_or((format, content_type));
 
         let bytes: bytes::Bytes = {
             let mut bytes = std::io::Cursor::new(vec![]);
