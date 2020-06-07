@@ -13,7 +13,6 @@ pub(crate) struct Identity;
 
 impl Processor for Identity {
     fn path(&self, mut path: PathBuf) -> PathBuf {
-        path.push("identity");
         path
     }
 
