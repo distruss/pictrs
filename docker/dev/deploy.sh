@@ -61,6 +61,9 @@ docker build \
     -t asonix/pictrs:arm64v8-latest \
     -f Dockerfile.arm64v8 \
     .
+docker push asonix/pictrs:arm64v8-$new_tag
+docker push asonix/pictrs:arm64v8-latest
+
 # Build for other archs
 # TODO
 
