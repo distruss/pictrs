@@ -64,7 +64,11 @@ pict-rs offers four endpoints:
     - `identity`: apply no changes
     - `blur{float}`: apply a gaussian blur to the file
     - `{int}`: produce a thumbnail of the image fitting inside an `{int}` by `{int}` square
-    An example of usage could be `GET /image/256/blur3.0/asdf.png`, which would create a 256x256px
+    An example of usage could be
+    ```
+    GET /image/256/blur3.0/asdf.png
+    ```
+    which would create a 256x256px
     thumbnail and blur it
 - `DELETE /image/{delete_token}/{file}` to delete a file, where `delete_token` and `file` are from
     the `/image` endpoint's JSON
