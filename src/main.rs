@@ -13,6 +13,7 @@ use structopt::StructOpt;
 
 mod config;
 mod error;
+mod processor;
 mod upload_manager;
 
 use self::{config::Config, error::UploadError, upload_manager::UploadManager};
@@ -151,39 +152,23 @@ async fn delete(
     Ok(HttpResponse::NoContent().finish())
 }
 
-/// Serve original files
+/// Serve files
 async fn serve(
     manager: web::Data<UploadManager>,
-    alias: web::Path<String>,
+    segments: web::Path<String>,
 ) -> Result<HttpResponse, UploadError> {
-    let filename = manager.from_alias(alias.into_inner()).await?;
-    let mut path = manager.image_dir();
-    path.push(filename);
+    let mut segments: Vec<String> = segments
+        .into_inner()
+        .split('/')
+        .map(|s| s.to_string())
+        .collect();
+    let alias = segments.pop().ok_or(UploadError::MissingFilename)?;
 
-    let ext = path
-        .extension()
-        .ok_or(UploadError::MissingExtension)?
-        .to_owned();
-    let ext = from_ext(ext);
+    let chain = self::processor::build_chain(&segments);
 
-    let stream = actix_fs::read_to_stream(path).await?;
-
-    Ok(srv_response(stream, ext))
-}
-
-/// Serve resized files
-async fn serve_resized(
-    manager: web::Data<UploadManager>,
-    path_entries: web::Path<(u32, String)>,
-) -> Result<HttpResponse, UploadError> {
-    use image::GenericImageView;
-
-    let mut path = manager.image_dir();
-
-    let (size, alias) = path_entries.into_inner();
     let name = manager.from_alias(alias).await?;
-    path.push(size.to_string());
-    path.push(name.clone());
+    let base = manager.image_dir();
+    let path = self::processor::build_path(base, &chain, name.clone());
 
     let ext = path
         .extension()
@@ -194,7 +179,7 @@ async fn serve_resized(
     // If the thumbnail doesn't exist, we need to create it
     if let Err(e) = actix_fs::metadata(path.clone()).await {
         if e.kind() != Some(std::io::ErrorKind::NotFound) {
-            error!("Error looking up thumbnail, {}", e);
+            error!("Error looking up processed image, {}", e);
             return Err(e.into());
         }
 
@@ -212,17 +197,12 @@ async fn serve_resized(
             (img, format)
         };
 
-        // return original image if resize target is larger
-        if !img.in_bounds(size, size) {
-            drop(img);
-            let stream = actix_fs::read_to_stream(original_path).await?;
-            return Ok(srv_response(stream, ext));
-        }
+        let img = self::processor::process_image(chain, img).await?;
 
         // perform thumbnail operation in a blocking thread
         let img_bytes: bytes::Bytes = web::block(move || {
             let mut bytes = std::io::Cursor::new(vec![]);
-            img.thumbnail(size, size).write_to(&mut bytes, format)?;
+            img.write_to(&mut bytes, format)?;
             Ok(bytes::Bytes::from(bytes.into_inner())) as Result<_, image::error::ImageError>
         })
         .await?;
@@ -319,14 +299,11 @@ async fn main() -> Result<(), anyhow::Error> {
                             .route(web::post().to(upload)),
                     )
                     .service(web::resource("/download").route(web::get().to(download)))
-                    .service(web::resource("/{filename}").route(web::get().to(serve)))
                     .service(
                         web::resource("/delete/{delete_token}/{filename}")
                             .route(web::delete().to(delete)),
                     )
-                    .service(
-                        web::resource("/{size}/{filename}").route(web::get().to(serve_resized)),
-                    ),
+                    .service(web::resource("/{tail:.*}").route(web::get().to(serve))),
             )
     })
     .bind(config.bind_address())?

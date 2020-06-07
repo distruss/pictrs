@@ -55,6 +55,9 @@ pub enum UploadError {
 
     #[error("Unable to send request, {0}")]
     SendRequest(String),
+
+    #[error("No filename provided in request")]
+    MissingFilename,
 }
 
 impl From<actix_web::client::SendRequestError> for UploadError {
@@ -96,7 +99,7 @@ impl ResponseError for UploadError {
             UploadError::NoFiles | UploadError::ContentType(_) | UploadError::Upload(_) => {
                 StatusCode::BAD_REQUEST
             }
-            UploadError::MissingAlias => StatusCode::NOT_FOUND,
+            UploadError::MissingAlias | UploadError::MissingFilename => StatusCode::NOT_FOUND,
             UploadError::InvalidToken => StatusCode::FORBIDDEN,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
