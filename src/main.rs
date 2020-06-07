@@ -2,7 +2,7 @@ use actix_form_data::{Field, Form, Value};
 use actix_web::{
     guard,
     http::header::{CacheControl, CacheDirective},
-    middleware::Logger,
+    middleware::{Compress, Logger},
     web, App, HttpResponse, HttpServer,
 };
 use futures::stream::{Stream, TryStreamExt};
@@ -260,6 +260,7 @@ async fn main() -> Result<(), anyhow::Error> {
     HttpServer::new(move || {
         App::new()
             .wrap(Logger::default())
+            .wrap(Compress::default())
             .data(manager.clone())
             .service(
                 web::scope("/image")
