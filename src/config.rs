@@ -5,16 +5,23 @@ pub(crate) struct Config {
     #[structopt(
         short,
         long,
-        help = "The address and port the server binds to, e.g. 127.0.0.1:80"
+        env = "PICTRS_ADDR",
+        default_value = "0.0.0.0:8080",
+        help = "The address and port the server binds to. Default: 0.0.0.0:8080"
     )]
     addr: SocketAddr,
 
-    #[structopt(short, long, help = "The path to the data directory, e.g. data/")]
+    #[structopt(
+      short, 
+      long, 
+      env = "PICTRS_PATH",
+      help = "The path to the data directory, e.g. data/")]
     path: PathBuf,
 
     #[structopt(
         short,
         long,
+        env = "PICTRS_FORMAT",
         help = "An image format to convert all uploaded files into, supports 'jpg' and 'png'"
     )]
     format: Option<Format>,
