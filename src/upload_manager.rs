@@ -191,10 +191,13 @@ impl UploadManager {
             let bytes = bytes.freeze();
 
             // -- VALIDATE IMAGE --
-            let format = image::guess_format(&bytes).map_err(UploadError::InvalidImage)?;
-            let img = image::load_from_memory(&bytes).map_err(UploadError::InvalidImage)?;
+            web::block(move || {
+                let format = image::guess_format(&bytes).map_err(UploadError::InvalidImage)?;
+                let img = image::load_from_memory(&bytes).map_err(UploadError::InvalidImage)?;
 
-            (img, format)
+                Ok((img, format)) as Result<(image::DynamicImage, image::ImageFormat), UploadError>
+            })
+            .await?
         };
 
         let (format, content_type) = self
@@ -208,11 +211,12 @@ impl UploadManager {
             return Err(UploadError::ContentType(content_type));
         }
 
-        let bytes: bytes::Bytes = {
+        let bytes: bytes::Bytes = web::block(move || {
             let mut bytes = std::io::Cursor::new(vec![]);
             img.write_to(&mut bytes, format)?;
-            bytes::Bytes::from(bytes.into_inner())
-        };
+            Ok(bytes::Bytes::from(bytes.into_inner())) as Result<bytes::Bytes, UploadError>
+        })
+        .await?;
 
         // -- DUPLICATE CHECKS --
 
