@@ -22,13 +22,14 @@ pub(crate) struct Config {
         short,
         long,
         env = "PICTRS_FORMAT",
-        help = "An image format to convert all uploaded files into, supports 'jpg' and 'png'"
+        help = "An optional image format to convert all uploaded files into, supports 'jpg' and 'png'"
     )]
     format: Option<Format>,
 
     #[structopt(
         short,
         long,
+        env = "PICTRS_FILTER_WHITELIST",
         help = "An optional list of filters to whitelist, supports 'identity', 'thumbnail', and 'blur'"
     )]
     whitelist: Option<Vec<String>>,

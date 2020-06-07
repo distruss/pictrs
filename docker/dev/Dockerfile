@@ -1,5 +1,5 @@
 # Build 
-FROM ekidd/rust-musl-builder:1.42.0-openssl11 as rust
+FROM ekidd/rust-musl-builder:1.44.0 as rust
 
 # Cache deps
 WORKDIR /app
@@ -17,7 +17,7 @@ COPY src ./src/
 # Build for release
 RUN cargo build --frozen --release
 
-FROM alpine:3.10
+FROM alpine:3.11
 
 # Copy resources
 COPY --from=rust /app/server/target/x86_64-unknown-linux-musl/release/pict-rs /app/pict-rs
