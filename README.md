@@ -59,8 +59,13 @@ pict-rs offers four endpoints:
     payload as the `POST` endpoint
 - `GET /image/{file}` for getting a full-resolution image. `file` here is the `file` key from the
     `/image` endpoint's JSON
-- `GET /image/{size}/{file}` where `size` is a positive integer. This endpoint is for accessing
-    thumbnails from an uploaded image.
+- `GET /image/{transformations...}/{file}` get a file with transformations applied.
+    existing transformations include
+    - `identity`: apply no changes
+    - `blur{float}`: apply a gaussian blur to the file
+    - `{int}`: produce a thumbnail of the image fitting inside an `{int}` by `{int}` square
+    An example of usage could be `GET /image/256/blur3.0/asdf.png`, which would create a 256x256px
+    thumbnail and blur it
 - `DELETE /image/{delete_token}/{file}` to delete a file, where `delete_token` and `file` are from
     the `/image` endpoint's JSON
 
