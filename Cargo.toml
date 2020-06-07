@@ -1,7 +1,11 @@
 [package]
 name = "pict-rs"
+description = "A simple image hosting service"
 version = "0.1.0"
 authors = ["asonix <asonix@asonix.dog>"]
+license = "AGPL-3.0"
+readme = "README.md"
+repository = "https://git.asonix.dog/asonix/pict-rs"
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
