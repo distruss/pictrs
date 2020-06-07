@@ -4,7 +4,6 @@ _a simple image hosting service_
 ## Usage
 ### Running
 ```
-$ ./pict-rs --help
 pict-rs 0.1.0
 
 USAGE:
@@ -15,9 +14,11 @@ FLAGS:
     -V, --version    Prints version information
 
 OPTIONS:
-    -a, --addr <addr>        The address and port the server binds to, e.g. 127.0.0.1:80
-    -f, --format <format>    An image format to convert all uploaded files into, supports 'jpg' and 'png'
-    -p, --path <path>        The path to the data directory, e.g. data/
+    -a, --addr <addr>                 The address and port the server binds to, e.g. 127.0.0.1:80
+    -f, --format <format>             An image format to convert all uploaded files into, supports 'jpg' and 'png'
+    -p, --path <path>                 The path to the data directory, e.g. data/
+    -w, --whitelist <whitelist>...    An optional list of filters to whitelist, supports 'identity', 'thumbnail', and
+                                      'blur'
 ```
 
 #### Example:
@@ -28,6 +29,10 @@ $ ./pict-rs -a 0.0.0.0:8080 -p /opt/data
 Running locally, port 9000, storing data in data/, and converting all uploads to PNG
 ```
 $ ./pict-rs -a 127.0.0.1:9000 -p data/ -f png
+```
+Running locally, port 8080, storing data in data/, and only allowing the `thumbnail` and `identity` filters
+```
+$ ./pict-rs -a 127.0.0.1:8080 -p data/ -w thumbnail identity
 ```
 
 ### API
@@ -63,10 +68,10 @@ pict-rs offers four endpoints:
     existing transformations include
     - `identity`: apply no changes
     - `blur{float}`: apply a gaussian blur to the file
-    - `{int}`: produce a thumbnail of the image fitting inside an `{int}` by `{int}` square
+    - `thumbnail{int}`: produce a thumbnail of the image fitting inside an `{int}` by `{int}` square
     An example of usage could be
     ```
-    GET /image/256/blur3.0/asdf.png
+    GET /image/thumbnail256/blur3.0/asdf.png
     ```
     which would create a 256x256px
     thumbnail and blur it

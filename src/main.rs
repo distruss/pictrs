@@ -8,7 +8,7 @@ use actix_web::{
 };
 use futures::stream::{Stream, TryStreamExt};
 use log::{error, info};
-use std::path::PathBuf;
+use std::{collections::HashSet, path::PathBuf};
 use structopt::StructOpt;
 
 mod config;
@@ -154,8 +154,9 @@ async fn delete(
 
 /// Serve files
 async fn serve(
-    manager: web::Data<UploadManager>,
     segments: web::Path<String>,
+    manager: web::Data<UploadManager>,
+    whitelist: web::Data<Option<HashSet<String>>>,
 ) -> Result<HttpResponse, UploadError> {
     let mut segments: Vec<String> = segments
         .into_inner()
@@ -164,7 +165,7 @@ async fn serve(
         .collect();
     let alias = segments.pop().ok_or(UploadError::MissingFilename)?;
 
-    let chain = self::processor::build_chain(&segments);
+    let chain = self::processor::build_chain(&segments, whitelist.as_ref().as_ref());
 
     let name = manager.from_alias(alias).await?;
     let base = manager.image_dir();
@@ -280,16 +281,20 @@ async fn main() -> Result<(), anyhow::Error> {
             })),
         );
 
+    let config2 = config.clone();
     HttpServer::new(move || {
         let client = Client::build()
             .header("User-Agent", "pict-rs v0.1.0-master")
             .finish();
+
+        let config = config2.clone();
 
         App::new()
             .wrap(Logger::default())
             .wrap(Compress::default())
             .data(manager.clone())
             .data(client)
+            .data(config.filter_whitelist())
             .service(
                 web::scope("/image")
                     .service(

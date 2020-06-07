@@ -1,6 +1,6 @@
-use std::{net::SocketAddr, path::PathBuf};
+use std::{collections::HashSet, net::SocketAddr, path::PathBuf};
 
-#[derive(structopt::StructOpt)]
+#[derive(Clone, Debug, structopt::StructOpt)]
 pub(crate) struct Config {
     #[structopt(
         short,
@@ -18,6 +18,13 @@ pub(crate) struct Config {
         help = "An image format to convert all uploaded files into, supports 'jpg' and 'png'"
     )]
     format: Option<Format>,
+
+    #[structopt(
+        short,
+        long,
+        help = "An optional list of filters to whitelist, supports 'identity', 'thumbnail', and 'blur'"
+    )]
+    whitelist: Option<Vec<String>>,
 }
 
 impl Config {
@@ -31,6 +38,12 @@ impl Config {
 
     pub(crate) fn format(&self) -> Option<Format> {
         self.format.clone()
+    }
+
+    pub(crate) fn filter_whitelist(&self) -> Option<HashSet<String>> {
+        self.whitelist
+            .as_ref()
+            .map(|wl| wl.iter().cloned().collect())
     }
 }
 
