@@ -20,6 +20,9 @@ pub enum UploadError {
     #[error("Error processing image, {0}")]
     Image(#[from] image::error::ImageError),
 
+    #[error("Error interacting with filesystem, {0}")]
+    Io(#[from] std::io::Error),
+
     #[error("Panic in blocking operation")]
     Canceled,
 
@@ -34,6 +37,18 @@ pub enum UploadError {
 
     #[error("Alias directed to missing file")]
     MissingFile,
+
+    #[error("Provided token did not match expected token")]
+    InvalidToken,
+}
+
+impl From<sled::transaction::TransactionError<UploadError>> for UploadError {
+    fn from(e: sled::transaction::TransactionError<UploadError>) -> Self {
+        match e {
+            sled::transaction::TransactionError::Abort(t) => t,
+            sled::transaction::TransactionError::Storage(e) => e.into(),
+        }
+    }
 }
 
 impl From<actix_form_data::Error> for UploadError {
@@ -61,6 +76,7 @@ impl ResponseError for UploadError {
                 StatusCode::BAD_REQUEST
             }
             UploadError::MissingAlias => StatusCode::NOT_FOUND,
+            UploadError::InvalidToken => StatusCode::FORBIDDEN,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }

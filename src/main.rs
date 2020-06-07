@@ -76,7 +76,10 @@ fn from_ext(ext: std::ffi::OsString) -> mime::Mime {
 }
 
 /// Handle responding to succesful uploads
-async fn upload(value: Value) -> Result<HttpResponse, UploadError> {
+async fn upload(
+    value: Value,
+    manager: web::Data<UploadManager>,
+) -> Result<HttpResponse, UploadError> {
     let images = value
         .map()
         .and_then(|mut m| m.remove("images"))
@@ -92,11 +95,26 @@ async fn upload(value: Value) -> Result<HttpResponse, UploadError> {
             .and_then(|s| s.to_str())
         {
             info!("Uploaded {} as {:?}", image.filename, saved_as);
-            files.push(serde_json::json!({ "file": saved_as }));
+            let delete_token = manager.delete_token(saved_as.to_owned()).await?;
+            files.push(serde_json::json!({
+                "file": saved_as,
+                "delete_token": delete_token,
+            }));
         }
     }
 
     Ok(HttpResponse::Created().json(serde_json::json!({ "msg": "ok", "files": files })))
+}
+
+async fn delete(
+    manager: web::Data<UploadManager>,
+    path_entries: web::Path<(String, String)>,
+) -> Result<HttpResponse, UploadError> {
+    let (alias, token) = path_entries.into_inner();
+
+    manager.delete(token, alias).await?;
+
+    Ok(HttpResponse::NoContent().finish())
 }
 
 /// Serve original files
@@ -248,6 +266,10 @@ async fn main() -> Result<(), anyhow::Error> {
                             .route(web::post().to(upload)),
                     )
                     .service(web::resource("/{filename}").route(web::get().to(serve)))
+                    .service(
+                        web::resource("/delete/{delete_token}/{filename}")
+                            .route(web::delete().to(delete)),
+                    )
                     .service(
                         web::resource("/{size}/{filename}").route(web::get().to(serve_resized)),
                     ),

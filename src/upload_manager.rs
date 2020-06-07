@@ -1,6 +1,7 @@
 use crate::{error::UploadError, safe_save_file, to_ext, ACCEPTED_MIMES};
 use actix_web::web;
 use futures::stream::{Stream, StreamExt};
+use log::warn;
 use sha2::Digest;
 use std::{path::PathBuf, pin::Pin, sync::Arc};
 
@@ -12,8 +13,8 @@ pub struct UploadManager {
 struct UploadManagerInner {
     hasher: sha2::Sha256,
     image_dir: PathBuf,
-    db: sled::Db,
     alias_tree: sled::Tree,
+    db: sled::Db,
 }
 
 type UploadStream = Pin<Box<dyn Stream<Item = Result<bytes::Bytes, actix_form_data::Error>>>>;
@@ -43,10 +44,7 @@ impl UploadManager {
         let mut sled_dir = root_dir.clone();
         sled_dir.push("db");
         // sled automatically creates it's own directories
-        //
-        // This is technically a blocking operation but it's fine because it happens before we
-        // start handling requests
-        let db = sled::open(sled_dir)?;
+        let db = web::block(move || sled::open(sled_dir)).await?;
 
         root_dir.push("files");
 
@@ -61,6 +59,108 @@ impl UploadManager {
                 db,
             }),
         })
+    }
+
+    pub(crate) async fn delete(&self, alias: String, token: String) -> Result<(), UploadError> {
+        use sled::Transactional;
+        let db = self.inner.db.clone();
+        let alias_tree = self.inner.alias_tree.clone();
+
+        let alias2 = alias.clone();
+        let hash = web::block(move || {
+            [&*db, &alias_tree].transaction(|v| {
+                let db = &v[0];
+                let alias_tree = &v[1];
+
+                // -- GET TOKEN --
+                let existing_token = alias_tree
+                    .remove(delete_key(&alias2).as_bytes())?
+                    .ok_or(trans_err(UploadError::MissingAlias))?;
+
+                // Bail if invalid token
+                if existing_token != token {
+                    warn!("Invalid delete token");
+                    return Err(trans_err(UploadError::InvalidToken));
+                }
+
+                // -- GET ID FOR HASH TREE CLEANUP --
+                let id = alias_tree
+                    .remove(alias_id_key(&alias2).as_bytes())?
+                    .ok_or(trans_err(UploadError::MissingAlias))?;
+                let id = String::from_utf8(id.to_vec()).map_err(|e| trans_err(e.into()))?;
+
+                // -- GET HASH FOR HASH TREE CLEANUP --
+                let hash = alias_tree
+                    .remove(alias2.as_bytes())?
+                    .ok_or(trans_err(UploadError::MissingAlias))?;
+
+                // -- REMOVE HASH TREE ELEMENT --
+                db.remove(alias_key(&hash, &id))?;
+                Ok(hash)
+            })
+        })
+        .await?;
+
+        // -- CHECK IF ANY OTHER ALIASES EXIST
+        let db = self.inner.db.clone();
+        let (start, end) = alias_key_bounds(&hash);
+        let any_aliases = web::block(move || {
+            Ok(db.range(start..end).next().is_some()) as Result<bool, UploadError>
+        })
+        .await?;
+
+        // Bail if there are existing aliases
+        if any_aliases {
+            return Ok(());
+        }
+
+        // -- DELETE HASH ENTRY --
+        let db = self.inner.db.clone();
+        let real_filename = web::block(move || {
+            let real_filename = db.remove(&hash)?.ok_or(UploadError::MissingFile)?;
+
+            Ok(real_filename) as Result<sled::IVec, UploadError>
+        })
+        .await?;
+
+        let real_filename = String::from_utf8(real_filename.to_vec())?;
+
+        let image_dir = self.image_dir();
+
+        web::block(move || blocking_delete_all_by_filename(image_dir, &real_filename)).await?;
+
+        Ok(())
+    }
+
+    /// Generate a delete token for an alias
+    pub(crate) async fn delete_token(&self, alias: String) -> Result<String, UploadError> {
+        use rand::distributions::{Alphanumeric, Distribution};
+        let rng = rand::thread_rng();
+        let s: String = Alphanumeric.sample_iter(rng).take(10).collect();
+        let delete_token = s.clone();
+
+        let alias_tree = self.inner.alias_tree.clone();
+        let key = delete_key(&alias);
+        let res = web::block(move || {
+            alias_tree.compare_and_swap(
+                key.as_bytes(),
+                None as Option<sled::IVec>,
+                Some(s.as_bytes()),
+            )
+        })
+        .await?;
+
+        if let Err(sled::CompareAndSwapError {
+            current: Some(ivec),
+            ..
+        }) = res
+        {
+            let s = String::from_utf8(ivec.to_vec())?;
+
+            return Ok(s);
+        }
+
+        Ok(delete_token)
     }
 
     /// Upload the file, discarding bytes if it's already present, or saving if it's new
@@ -206,9 +306,7 @@ impl UploadManager {
             let db = self.inner.db.clone();
             let id = web::block(move || db.generate_id()).await?.to_string();
 
-            let mut key = hash.to_vec();
-            key.extend(id.as_bytes());
-
+            let key = alias_key(hash, &id);
             let db = self.inner.db.clone();
             let alias2 = alias.clone();
             let res = web::block(move || {
@@ -217,6 +315,10 @@ impl UploadManager {
             .await?;
 
             if res.is_ok() {
+                let alias_tree = self.inner.alias_tree.clone();
+                let key = alias_id_key(&alias);
+                web::block(move || alias_tree.insert(key.as_bytes(), id.as_bytes())).await?;
+
                 break;
             }
         }
@@ -255,6 +357,55 @@ impl UploadManager {
     }
 }
 
+fn blocking_delete_all_by_filename(mut dir: PathBuf, filename: &str) -> Result<(), UploadError> {
+    for res in std::fs::read_dir(dir.clone())? {
+        let entry = res?;
+
+        if entry.path().is_dir() {
+            blocking_delete_all_by_filename(entry.path(), filename)?;
+        }
+    }
+
+    dir.push(filename);
+
+    if dir.is_file() {
+        std::fs::remove_file(dir)?;
+    }
+
+    Ok(())
+}
+
+fn trans_err(e: UploadError) -> sled::transaction::ConflictableTransactionError<UploadError> {
+    sled::transaction::ConflictableTransactionError::Abort(e)
+}
+
 fn file_name(name: String, content_type: mime::Mime) -> String {
     format!("{}{}", name, to_ext(content_type))
+}
+
+fn alias_key(hash: &[u8], id: &str) -> Vec<u8> {
+    let mut key = hash.to_vec();
+    // add a separator to the key between the hash and the ID
+    key.extend(&[0]);
+    key.extend(id.as_bytes());
+
+    key
+}
+
+fn alias_key_bounds(hash: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    let mut start = hash.to_vec();
+    start.extend(&[0]);
+
+    let mut end = hash.to_vec();
+    end.extend(&[1]);
+
+    (start, end)
+}
+
+fn alias_id_key(alias: &str) -> String {
+    format!("{}/id", alias)
+}
+
+fn delete_key(alias: &str) -> String {
+    format!("{}/delete", alias)
 }
