@@ -106,7 +106,7 @@ impl UploadManager {
         })
         .await?;
 
-        // -- CHECK IF ANY OTHER ALIASES EXIST
+        // -- CHECK IF ANY OTHER ALIASES EXIST --
         let db = self.inner.db.clone();
         let (start, end) = alias_key_bounds(&hash);
         let any_aliases = web::block(move || {
@@ -237,8 +237,6 @@ impl UploadManager {
             path.push(alias);
             return Ok(Some(path));
         }
-
-        // TODO: validate image before saving
 
         // -- WRITE NEW FILE --
         let mut real_path = self.image_dir();
