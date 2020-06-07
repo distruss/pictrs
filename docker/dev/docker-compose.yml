@@ -1,0 +1,15 @@
+version: '3.3'
+
+services:
+  pictrs:
+    build: 
+      context: ../../
+      dockerfile: docker/dev/Dockerfile
+    user: root
+    ports:
+      - "127.0.0.1:8080:8080"
+    restart: always
+    environment:
+      - PICTRS_PATH=/app/data
+    volumes:
+      - ./volumes/pictrs:/app/data
