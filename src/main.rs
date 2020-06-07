@@ -1,5 +1,6 @@
 use actix_form_data::{Field, Form, Value};
 use actix_web::{
+    client::Client,
     guard,
     http::header::{CacheControl, CacheDirective},
     middleware::{Compress, Logger},
@@ -100,12 +101,43 @@ async fn upload(
             let delete_token = manager.delete_token(saved_as.to_owned()).await?;
             files.push(serde_json::json!({
                 "file": saved_as,
-                "delete_token": delete_token,
+                "delete_token": delete_token
             }));
         }
     }
 
-    Ok(HttpResponse::Created().json(serde_json::json!({ "msg": "ok", "files": files })))
+    Ok(HttpResponse::Created().json(serde_json::json!({
+        "msg": "ok",
+        "files": files
+    })))
+}
+
+/// download an image from a URL
+async fn download(
+    client: web::Data<Client>,
+    manager: web::Data<UploadManager>,
+    query: web::Query<UrlQuery>,
+) -> Result<HttpResponse, UploadError> {
+    let mut res = client.get(&query.url).send().await?;
+
+    if !res.status().is_success() {
+        return Err(UploadError::Download(res.status()));
+    }
+
+    let fut = res.body().limit(40 * MEGABYTES);
+
+    let stream = Box::pin(futures::stream::once(fut));
+
+    let alias = manager.upload(stream).await?;
+    let delete_token = manager.delete_token(alias.clone()).await?;
+
+    Ok(HttpResponse::Created().json(serde_json::json!({
+        "msg": "ok",
+        "files": [{
+            "file": alias,
+            "delete_token": delete_token
+        }]
+    })))
 }
 
 async fn delete(
@@ -234,6 +266,11 @@ where
         .streaming(stream.err_into())
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct UrlQuery {
+    url: String,
+}
+
 #[actix_rt::main]
 async fn main() -> Result<(), anyhow::Error> {
     let config = Config::from_args();
@@ -250,18 +287,29 @@ async fn main() -> Result<(), anyhow::Error> {
         .max_file_size(40 * MEGABYTES)
         .field(
             "images",
-            Field::array(Field::file(move |filename, content_type, stream| {
+            Field::array(Field::file(move |_, _, stream| {
                 let manager = manager2.clone();
 
-                async move { manager.upload(filename, content_type, stream).await }
+                async move {
+                    manager.upload(stream).await.map(|alias| {
+                        let mut path = PathBuf::new();
+                        path.push(alias);
+                        Some(path)
+                    })
+                }
             })),
         );
 
     HttpServer::new(move || {
+        let client = Client::build()
+            .header("User-Agent", "pict-rs v0.1.0-master")
+            .finish();
+
         App::new()
             .wrap(Logger::default())
             .wrap(Compress::default())
             .data(manager.clone())
+            .data(client)
             .service(
                 web::scope("/image")
                     .service(
@@ -270,6 +318,7 @@ async fn main() -> Result<(), anyhow::Error> {
                             .wrap(form.clone())
                             .route(web::post().to(upload)),
                     )
+                    .service(web::resource("/download").route(web::get().to(download)))
                     .service(web::resource("/{filename}").route(web::get().to(serve)))
                     .service(
                         web::resource("/delete/{delete_token}/{filename}")

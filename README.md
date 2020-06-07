@@ -55,6 +55,8 @@ pict-rs offers four endpoints:
         "msg": "ok"
     }
     ```
+- `GET /image/download?url=...` Download an image from a remote server, returning the same JSON
+    payload as the `POST` endpoint
 - `GET /image/{file}` for getting a full-resolution image. `file` here is the `file` key from the
     `/image` endpoint's JSON
 - `GET /image/{size}/{file}` where `size` is a positive integer. This endpoint is for accessing

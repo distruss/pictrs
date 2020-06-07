@@ -43,6 +43,24 @@ pub enum UploadError {
 
     #[error("Uploaded content could not be validated as an image")]
     InvalidImage(image::error::ImageError),
+
+    #[error("Unsupported image format")]
+    UnsupportedFormat,
+
+    #[error("Unable to download image, bad response {0}")]
+    Download(actix_web::http::StatusCode),
+
+    #[error("Unable to download image, {0}")]
+    Payload(#[from] actix_web::client::PayloadError),
+
+    #[error("Unable to send request, {0}")]
+    SendRequest(String),
+}
+
+impl From<actix_web::client::SendRequestError> for UploadError {
+    fn from(e: actix_web::client::SendRequestError) -> Self {
+        UploadError::SendRequest(e.to_string())
+    }
 }
 
 impl From<sled::transaction::TransactionError<UploadError>> for UploadError {

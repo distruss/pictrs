@@ -18,7 +18,7 @@ struct UploadManagerInner {
     db: sled::Db,
 }
 
-type UploadStream = Pin<Box<dyn Stream<Item = Result<bytes::Bytes, actix_form_data::Error>>>>;
+type UploadStream<E> = Pin<Box<dyn Stream<Item = Result<bytes::Bytes, E>>>>;
 
 enum Dup {
     Exists,
@@ -176,16 +176,10 @@ impl UploadManager {
     }
 
     /// Upload the file, discarding bytes if it's already present, or saving if it's new
-    pub(crate) async fn upload(
-        &self,
-        _filename: String,
-        content_type: mime::Mime,
-        mut stream: UploadStream,
-    ) -> Result<Option<PathBuf>, UploadError> {
-        if ACCEPTED_MIMES.iter().all(|valid| *valid != content_type) {
-            return Err(UploadError::ContentType(content_type));
-        }
-
+    pub(crate) async fn upload<E>(&self, mut stream: UploadStream<E>) -> Result<String, UploadError>
+    where
+        UploadError: From<E>,
+    {
         let (img, format) = {
             // -- READ IN BYTES FROM CLIENT --
             let mut bytes = bytes::BytesMut::new();
@@ -208,7 +202,11 @@ impl UploadManager {
             .format
             .as_ref()
             .map(|f| (f.to_image_format(), f.to_mime()))
-            .unwrap_or((format, content_type));
+            .unwrap_or((format.clone(), valid_format(format)?));
+
+        if ACCEPTED_MIMES.iter().all(|valid| *valid != content_type) {
+            return Err(UploadError::ContentType(content_type));
+        }
 
         let bytes: bytes::Bytes = {
             let mut bytes = std::io::Cursor::new(vec![]);
@@ -226,9 +224,7 @@ impl UploadManager {
 
         // bail early with alias to existing file if this is a duplicate
         if dup.exists() {
-            let mut path = PathBuf::new();
-            path.push(alias);
-            return Ok(Some(path));
+            return Ok(alias);
         }
 
         // -- WRITE NEW FILE --
@@ -238,9 +234,7 @@ impl UploadManager {
         safe_save_file(real_path, bytes).await?;
 
         // Return alias to file
-        let mut path = PathBuf::new();
-        path.push(alias);
-        Ok(Some(path))
+        Ok(alias)
     }
 
     pub(crate) async fn from_alias(&self, alias: String) -> Result<String, UploadError> {
@@ -439,4 +433,14 @@ fn alias_id_key(alias: &str) -> String {
 
 fn delete_key(alias: &str) -> String {
     format!("{}/delete", alias)
+}
+
+fn valid_format(format: image::ImageFormat) -> Result<mime::Mime, UploadError> {
+    match format {
+        image::ImageFormat::Jpeg => Ok(mime::IMAGE_JPEG),
+        image::ImageFormat::Png => Ok(mime::IMAGE_PNG),
+        image::ImageFormat::Gif => Ok(mime::IMAGE_GIF),
+        image::ImageFormat::Bmp => Ok(mime::IMAGE_BMP),
+        _ => Err(UploadError::UnsupportedFormat),
+    }
 }
