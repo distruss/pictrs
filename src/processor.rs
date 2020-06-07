@@ -12,7 +12,7 @@ pub(crate) trait Processor {
 pub(crate) struct Identity;
 
 impl Processor for Identity {
-    fn path(&self, mut path: PathBuf) -> PathBuf {
+    fn path(&self, path: PathBuf) -> PathBuf {
         path
     }
 
