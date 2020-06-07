@@ -1,7 +1,7 @@
 use crate::{error::UploadError, safe_save_file, to_ext, ACCEPTED_MIMES};
 use actix_web::web;
 use futures::stream::{Stream, StreamExt};
-use log::warn;
+use log::{error, warn};
 use sha2::Digest;
 use std::{path::PathBuf, pin::Pin, sync::Arc};
 
@@ -127,7 +127,14 @@ impl UploadManager {
 
         let image_dir = self.image_dir();
 
-        web::block(move || blocking_delete_all_by_filename(image_dir, &real_filename)).await?;
+        // -- DELETE FILES --
+        actix_rt::spawn(async move {
+            if let Err(e) =
+                web::block(move || blocking_delete_all_by_filename(image_dir, &real_filename)).await
+            {
+                error!("Error removing files from fs, {}", e);
+            }
+        });
 
         Ok(())
     }
