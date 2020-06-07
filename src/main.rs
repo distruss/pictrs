@@ -239,7 +239,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let config = Config::from_args();
     std::env::set_var("RUST_LOG", "info");
     env_logger::init();
-    let manager = UploadManager::new(config.data_dir()).await?;
+    let manager = UploadManager::new(config.data_dir(), config.format()).await?;
 
     // Create a new Multipart Form validator
     //

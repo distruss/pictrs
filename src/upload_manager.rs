@@ -1,4 +1,4 @@
-use crate::{error::UploadError, safe_save_file, to_ext, ACCEPTED_MIMES};
+use crate::{config::Format, error::UploadError, safe_save_file, to_ext, ACCEPTED_MIMES};
 use actix_web::web;
 use futures::stream::{Stream, StreamExt};
 use log::{error, warn};
@@ -11,6 +11,7 @@ pub struct UploadManager {
 }
 
 struct UploadManagerInner {
+    format: Option<Format>,
     hasher: sha2::Sha256,
     image_dir: PathBuf,
     alias_tree: sled::Tree,
@@ -40,7 +41,10 @@ impl UploadManager {
     }
 
     /// Create a new UploadManager
-    pub(crate) async fn new(mut root_dir: PathBuf) -> Result<Self, UploadError> {
+    pub(crate) async fn new(
+        mut root_dir: PathBuf,
+        format: Option<Format>,
+    ) -> Result<Self, UploadError> {
         let mut sled_dir = root_dir.clone();
         sled_dir.push("db");
         // sled automatically creates it's own directories
@@ -53,6 +57,7 @@ impl UploadManager {
 
         Ok(UploadManager {
             inner: Arc::new(UploadManagerInner {
+                format,
                 hasher: sha2::Sha256::new(),
                 image_dir: root_dir,
                 alias_tree: db.open_tree("alias")?,
@@ -181,14 +186,42 @@ impl UploadManager {
             return Err(UploadError::ContentType(content_type));
         }
 
-        // -- READ IN BYTES FROM CLIENT --
-        let mut bytes = bytes::BytesMut::new();
+        let (img, format) = {
+            // -- READ IN BYTES FROM CLIENT --
+            let mut bytes = bytes::BytesMut::new();
 
-        while let Some(res) = stream.next().await {
-            bytes.extend(res?);
-        }
+            while let Some(res) = stream.next().await {
+                bytes.extend(res?);
+            }
 
-        let bytes = bytes.freeze();
+            let bytes = bytes.freeze();
+
+            // -- VALIDATE IMAGE --
+            let format = image::guess_format(&bytes).map_err(UploadError::InvalidImage)?;
+            let img = image::load_from_memory(&bytes).map_err(UploadError::InvalidImage)?;
+
+            (img, format)
+        };
+
+        let format = self
+            .inner
+            .format
+            .as_ref()
+            .map(|f| f.to_image_format())
+            .unwrap_or(format);
+
+        let content_type = self
+            .inner
+            .format
+            .as_ref()
+            .map(|f| f.to_mime())
+            .unwrap_or(content_type);
+
+        let bytes: bytes::Bytes = {
+            let mut bytes = std::io::Cursor::new(vec![]);
+            img.write_to(&mut bytes, format)?;
+            bytes::Bytes::from(bytes.into_inner())
+        };
 
         // -- DUPLICATE CHECKS --
 

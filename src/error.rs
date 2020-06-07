@@ -40,6 +40,9 @@ pub enum UploadError {
 
     #[error("Provided token did not match expected token")]
     InvalidToken,
+
+    #[error("Uploaded content could not be validated as an image")]
+    InvalidImage(image::error::ImageError),
 }
 
 impl From<sled::transaction::TransactionError<UploadError>> for UploadError {
