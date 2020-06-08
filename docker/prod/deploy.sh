@@ -70,3 +70,4 @@ build_image $new_tag amd64
 # TODO
 
 ./manifest.sh $new_tag
+./manifest.sh latest
