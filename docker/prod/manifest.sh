@@ -17,14 +17,6 @@ function print_help() {
     echo "	tag: The git tag to be applied to the image manifest"
 }
 
-function annotate() {
-    tag=$1
-    arch=$2
-
-    docker manifest annotate asonix/pictrs:$tag \
-        asonix/pictrs:$arch-$tag --os linux --arch $arch
-}
-
 new_tag=$1
 
 require "$new_tag" "tag"
@@ -32,12 +24,17 @@ require "$new_tag" "tag"
 set -xe
 
 docker manifest create asonix/pictrs:$new_tag \
-    asonix/pictrs:arm64v8-$new_tag \
-    asonix/pictrs:arm32v7-$new_tag \
-    asonix/pictrs:amd64-$new_tag
+    -a asonix/pictrs:arm64v8-$new_tag \
+    -a asonix/pictrs:arm32v7-$new_tag \
+    -a asonix/pictrs:amd64-$new_tag
 
-annotate $new_tag arm64v8
-annotate $new_tag arm32v7
-annotate $new_tag amd64
+docker manifest annotate asonix/pictrs:$new_tag \
+    asonix/pictrs:arm64v8-$new_tag --os linux --arch arm64 --variant v8
 
-# docker manifest push asonix/pictrs:$new_tag
+docker manifest annotate asonix/pictrs:$new_tag \
+    asonix/pictrs:arm32v7-$new_tag --os linux --arch arm --variant v7
+
+docker manifest annotate asonix/pictrs:$new_tag \
+    asonix/pictrs:amd64-$new_tag --os linux --arch amd64
+
+docker manifest push asonix/pictrs:$new_tag --purge
