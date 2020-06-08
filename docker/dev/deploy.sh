@@ -24,7 +24,6 @@ function build_image() {
 
     docker build \
         --pull \
-        --no-cache \
         --build-arg TAG=$tag \
         -t asonix/pictrs:$arch-$tag \
         -t asonix/pictrs:$arch-latest \
@@ -63,11 +62,11 @@ git push origin $new_tag
 git push
 
 # Rebuilding docker
-docker-compose build
-docker tag dev_pictrs:latest asonix/pictrs:x64-$new_tag-dev
-docker tag dev_pictrs:latest asonix/pictrs:x64-latest-dev
-docker push asonix/pictrs:x64-$new_tag-dev
-docker push asonix/pictrs:x64-latest-dev
+# docker-compose build
+# docker tag dev_pictrs:latest asonix/pictrs:x64-$new_tag-dev
+# docker tag dev_pictrs:latest asonix/pictrs:x64-latest-dev
+# docker push asonix/pictrs:x64-$new_tag-dev
+# docker push asonix/pictrs:x64-latest-dev
 
 # Build for arm64v8 and arm32v7
 build_image $new_tag arm64v8
