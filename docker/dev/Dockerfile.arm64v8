@@ -62,7 +62,7 @@ COPY --from=builder /opt/build/repo/target/aarch64-unknown-linux-musl/release/$B
 RUN \
  apk add tini && \
  addgroup -g $GID pictrs && \
- adduser -D -G pictrs -g "" -h /opt/pictrs pictrs
+ adduser -D -G pictrs -u $UID -g "" -h /opt/pictrs pictrs
 
 RUN \
  chown -R pictrs:pictrs /mnt
