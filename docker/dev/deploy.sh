@@ -64,10 +64,10 @@ git push
 
 # Rebuilding docker
 docker-compose build
-docker tag dev_pictrs:latest asonix/pictrs:x64-$new_tag
-docker tag dev_pictrs:latest asonix/pictrs:x64-latest
-docker push asonix/pictrs:x64-$new_tag
-docker push asonix/pictrs:x64-latest
+docker tag dev_pictrs:latest asonix/pictrs:x64-$new_tag-dev
+docker tag dev_pictrs:latest asonix/pictrs:x64-latest-dev
+docker push asonix/pictrs:x64-$new_tag-dev
+docker push asonix/pictrs:x64-latest-dev
 
 # Build for arm64v8 and arm32v7
 build_image $new_tag arm64v8
