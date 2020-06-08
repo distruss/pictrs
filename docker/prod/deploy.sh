@@ -50,7 +50,7 @@ set -xe
 git checkout master
 
 # Changing the docker-compose prod
-sed -i "s/asonix\/pictrs:.*/asonix\/pictrs:amd64-$new_tag/" ../prod/docker-compose.yml
+sed -i "s/asonix\/pictrs:.*/asonix\/pictrs:amd64-$new_tag/" docker-compose.yml
 git add ../prod/docker-compose.yml
 
 # The commit
@@ -61,14 +61,7 @@ git tag $new_tag
 git push origin $new_tag
 git push
 
-# Rebuilding docker
-# docker-compose build
-# docker tag dev_pictrs:latest asonix/pictrs:x64-$new_tag-dev
-# docker tag dev_pictrs:latest asonix/pictrs:x64-latest-dev
-# docker push asonix/pictrs:x64-$new_tag-dev
-# docker push asonix/pictrs:x64-latest-dev
-
-# Build for arm64v8 and arm32v7
+# Build for arm64v8, arm32v7, and amd64
 build_image $new_tag arm64v8
 build_image $new_tag arm32v7
 build_image $new_tag amd64
