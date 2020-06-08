@@ -39,8 +39,10 @@ $ ./pict-rs -a 127.0.0.1:8080 -p data/ -w thumbnail identity
 Run the following commands:
 ```
 # Create a folder for the files (anywhere works)
-mkdir /pict-rs
-cd /pict-rs
+mkdir ./pict-rs
+cd ./pict-rs
+mkdir -p volumes/pictrs
+sudo chown -R 991:991 volumes/pictrs
 wget https://git.asonix.dog/asonix/pict-rs/raw/branch/master/docker/prod/docker-compose.yml
 sudo docker-compose up -d
 ```
