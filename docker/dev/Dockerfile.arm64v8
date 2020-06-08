@@ -1,15 +1,11 @@
-FROM rustembedded/cross:aarch64-unknown-linux-musl AS builder
+FROM rustembedded/cross:aarch64-unknown-linux-musl AS aarch64-builder
 
 ARG UID=991
 ARG GID=991
 
-ARG TOOLCHAIN=stable
-ARG TARGET=aarch64-unknown-linux-musl
-ARG TOOL=aarch64-linux-musl
-
-ARG REPOSITORY=https://git.asonix.dog/asonix/pict-rs
-ARG TAG=master
-ARG BINARY=pict-rs
+ENV TOOLCHAIN=stable
+ENV TARGET=aarch64-unknown-linux-musl
+ENV TOOL=aarch64-linux-musl
 
 RUN \
  apt-get update && \
@@ -39,6 +35,12 @@ RUN \
  chmod +x rustup.sh && \
  ./rustup.sh --default-toolchain $TOOLCHAIN --profile minimal -y && \
  rustup target add $TARGET
+
+FROM aarch64-builder as builder
+
+ARG TAG=master
+ARG REPOSITORY=https://git.asonix.dog/asonix/pict-rs
+ARG BINARY=pict-rs
 
 RUN \
  git clone -b $TAG $REPOSITORY repo
