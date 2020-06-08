@@ -7,7 +7,5 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     restart: always
-    environment:
-      - PICTRS_PATH=/app/data
     volumes:
-      - ./volumes/pictrs:/app/data
+      - ./volumes/pictrs:/mnt

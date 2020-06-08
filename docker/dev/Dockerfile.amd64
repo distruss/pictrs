@@ -1,11 +1,11 @@
-FROM rustembedded/cross:aarch64-unknown-linux-musl AS builder
+FROM rustembedded/cross:x86_64-unknown-linux-musl AS builder
 
 ARG UID=991
 ARG GID=991
 
 ARG TOOLCHAIN=stable
-ARG TARGET=aarch64-unknown-linux-musl
-ARG TOOL=aarch64-linux-musl
+ARG TARGET=x86_64-unknown-linux-musl
+ARG TOOL=x86_64-linux-musl
 
 ARG REPOSITORY=https://git.asonix.dog/asonix/pict-rs
 ARG TAG=master
@@ -55,7 +55,7 @@ ARG UID=991
 ARG GID=991
 ARG BINARY=pict-rs
 
-COPY --from=builder /opt/build/repo/target/aarch64-unknown-linux-musl/release/$BINARY /usr/bin/$BINARY
+COPY --from=builder /opt/build/repo/target/x86_64-unknown-linux-musl/release/$BINARY /usr/bin/$BINARY
 
 RUN \
  apk add tini && \

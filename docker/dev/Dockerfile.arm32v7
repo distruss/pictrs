@@ -62,7 +62,12 @@ RUN \
  addgroup -g $GID pictrs && \
  adduser -D -G pictrs -g "" -h /opt/pictrs pictrs
 
+VOLUME /mnt
+
+RUN \
+ chown -R pictrs:pictrs /mnt
+
 WORKDIR /opt/pictrs
 USER pictrs
 ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["/usr/bin/pict-rs"]
+CMD ["/usr/bin/pict-rs", "-p", "/mnt", "-a", "0.0.0.0:8080", "-w", "thumbnail"]
