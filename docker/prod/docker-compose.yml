@@ -2,7 +2,7 @@ version: '3.3'
 
 services:
   pictrs:
-    image: asonix/pictrs:amd64-v0.1.0-r7
+    image: asonix/pictrs:amd64-v0.1.0-r8
     user: root
     ports:
       - "127.0.0.1:8080:8080"
