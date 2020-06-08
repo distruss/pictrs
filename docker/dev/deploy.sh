@@ -18,6 +18,23 @@ function print_help() {
     echo "	tag: The git tag to be applied to the repository and docker build"
 }
 
+function build_image() {
+    tag=$1
+    arch=$2
+
+    docker build \
+        --pull \
+        --no-cache \
+        --build-arg TAG=$tag \
+        -t asonix/pictrs:$arch-$tag \
+        -t asonix/pictrs:$arch-latest \
+        -f Dockerfile.$arch \
+        .
+
+    docker push asonix/pictrs:$arch-$tag
+    docker push asonix/pictrs:$arch-latest
+}
+
 # Creating the new tag
 new_tag="$1"
 
@@ -52,17 +69,9 @@ docker tag dev_pictrs:latest asonix/pictrs:x64-latest
 docker push asonix/pictrs:x64-$new_tag
 docker push asonix/pictrs:x64-latest
 
-# Build for arm64v8
-docker build \
-    --pull \
-    --no-cache \
-    --build-arg TAG=$new_tag \
-    -t asonix/pictrs:arm64v8-$new_tag \
-    -t asonix/pictrs:arm64v8-latest \
-    -f Dockerfile.arm64v8 \
-    .
-docker push asonix/pictrs:arm64v8-$new_tag
-docker push asonix/pictrs:arm64v8-latest
+# Build for arm64v8 and arm32v7
+build_image $new_tag arm64v8
+build_image $new_tag arm32v7
 
 # Build for other archs
 # TODO

@@ -1,0 +1,68 @@
+FROM rustembedded/cross:arm-unknown-linux-musleabihf AS builder
+
+ARG UID=991
+ARG GID=991
+
+ARG TOOLCHAIN=stable
+ARG TARGET=arm-unknown-linux-musleabihf
+ARG TOOL=arm-linux-musleabihf
+
+ARG REPOSITORY=https://git.asonix.dog/asonix/pict-rs
+ARG TAG=master
+ARG BINARY=pict-rs
+
+RUN \
+ apt-get update && \
+ apt-get upgrade -y
+
+RUN \
+ addgroup --gid "${GID}" build && \
+ adduser \
+    --disabled-password \
+    --gecos "" \
+    --ingroup build \
+    --uid "${UID}" \
+    --home /opt/build \
+    build
+
+ADD https://sh.rustup.rs /opt/build/rustup.sh
+
+RUN \
+ chown -R build:build /opt/build
+
+USER build
+WORKDIR /opt/build
+
+ENV PATH=/opt/build/.cargo/bin:/usr/local/musl/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+RUN \
+ chmod +x rustup.sh && \
+ ./rustup.sh --default-toolchain $TOOLCHAIN --profile minimal -y && \
+ rustup target add $TARGET
+
+RUN \
+ git clone -b $TAG $REPOSITORY repo
+
+WORKDIR /opt/build/repo
+
+RUN \
+ cargo build --release --target $TARGET && \
+ $TOOL-strip target/$TARGET/release/$BINARY
+
+FROM arm32v7/alpine:3.11
+
+ARG UID=991
+ARG GID=991
+ARG BINARY=pict-rs
+
+COPY --from=builder /opt/build/repo/target/arm-unknown-linux-musleabihf/release/$BINARY /usr/bin/$BINARY
+
+RUN \
+ apk add tini && \
+ addgroup -g $GID pictrs && \
+ adduser -D -G pictrs -g "" -h /opt/pictrs pictrs
+
+WORKDIR /opt/pictrs
+USER pictrs
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["/usr/bin/pict-rs"]
