@@ -306,7 +306,8 @@ async fn main() -> Result<(), anyhow::Error> {
                     .service(web::resource("/download").route(web::get().to(download)))
                     .service(
                         web::resource("/delete/{delete_token}/{filename}")
-                            .route(web::delete().to(delete)),
+                            .route(web::delete().to(delete))
+                            .route(web::get().to(delete)),
                     )
                     .service(web::resource("/{tail:.*}").route(web::get().to(serve))),
             )
