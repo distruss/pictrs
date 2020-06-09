@@ -15,6 +15,7 @@ struct UploadManagerInner {
     hasher: sha2::Sha256,
     image_dir: PathBuf,
     alias_tree: sled::Tree,
+    filename_tree: sled::Tree,
     db: sled::Db,
 }
 
@@ -61,9 +62,30 @@ impl UploadManager {
                 hasher: sha2::Sha256::new(),
                 image_dir: root_dir,
                 alias_tree: db.open_tree("alias")?,
+                filename_tree: db.open_tree("filename")?,
                 db,
             }),
         })
+    }
+
+    pub(crate) async fn store_variant(&self, path: PathBuf) -> Result<(), UploadError> {
+        let filename = path
+            .file_name()
+            .and_then(|f| f.to_str())
+            .map(|s| s.to_string())
+            .ok_or(UploadError::Path)?;
+        let path_string = path.to_str().ok_or(UploadError::Path)?.to_string();
+
+        let fname_tree = self.inner.filename_tree.clone();
+        let hash: sled::IVec = web::block(move || fname_tree.get(filename.as_bytes()))
+            .await?
+            .ok_or(UploadError::MissingFilename)?;
+
+        let key = variant_key(&hash, &path_string);
+        let db = self.inner.db.clone();
+        web::block(move || db.insert(key, path_string.as_bytes())).await?;
+
+        Ok(())
     }
 
     pub(crate) async fn delete(&self, alias: String, token: String) -> Result<(), UploadError> {
@@ -121,26 +143,61 @@ impl UploadManager {
 
         // -- DELETE HASH ENTRY --
         let db = self.inner.db.clone();
-        let real_filename = web::block(move || {
-            let real_filename = db.remove(&hash)?.ok_or(UploadError::MissingFile)?;
-
-            Ok(real_filename) as Result<sled::IVec, UploadError>
-        })
-        .await?;
-
-        let real_filename = String::from_utf8(real_filename.to_vec())?;
-
-        let image_dir = self.image_dir();
+        let hash2 = hash.clone();
+        let filename = web::block(move || db.remove(&hash2))
+            .await?
+            .ok_or(UploadError::MissingFile)?;
 
         // -- DELETE FILES --
+        let this = self.clone();
         actix_rt::spawn(async move {
-            if let Err(e) =
-                web::block(move || blocking_delete_all_by_filename(image_dir, &real_filename)).await
-            {
+            if let Err(e) = this.cleanup_files(filename).await {
                 error!("Error removing files from fs, {}", e);
             }
         });
 
+        Ok(())
+    }
+
+    async fn cleanup_files(&self, filename: sled::IVec) -> Result<(), UploadError> {
+        let mut path = self.image_dir();
+        let fname = String::from_utf8(filename.to_vec())?;
+        path.push(fname);
+
+        let mut errors = Vec::new();
+        if let Err(e) = actix_fs::remove_file(path).await {
+            errors.push(e.into());
+        }
+
+        let fname_tree = self.inner.filename_tree.clone();
+        let hash = web::block(move || fname_tree.remove(filename))
+            .await?
+            .ok_or(UploadError::MissingFile)?;
+
+        let (start, end) = variant_key_bounds(&hash);
+        let db = self.inner.db.clone();
+        let keys = web::block(move || {
+            let mut keys = Vec::new();
+            for key in db.range(start..end).keys() {
+                keys.push(key?.to_owned());
+            }
+
+            Ok(keys) as Result<Vec<sled::IVec>, UploadError>
+        })
+        .await?;
+
+        for key in keys {
+            let db = self.inner.db.clone();
+            if let Some(path) = web::block(move || db.remove(key)).await? {
+                if let Err(e) = remove_path(path).await {
+                    errors.push(e);
+                }
+            }
+        }
+
+        for error in errors {
+            error!("Error deleting files, {}", error);
+        }
         Ok(())
     }
 
@@ -279,8 +336,13 @@ impl UploadManager {
 
         let filename = self.next_file(content_type).await?;
         let filename2 = filename.clone();
+        let hash2 = hash.clone();
         let res = web::block(move || {
-            db.compare_and_swap(hash, None as Option<sled::IVec>, Some(filename2.as_bytes()))
+            db.compare_and_swap(
+                hash2,
+                None as Option<sled::IVec>,
+                Some(filename2.as_bytes()),
+            )
         })
         .await?;
 
@@ -292,6 +354,10 @@ impl UploadManager {
             let name = String::from_utf8(ivec.to_vec())?;
             return Ok((Dup::Exists, name));
         }
+
+        let fname_tree = self.inner.filename_tree.clone();
+        let filename2 = filename.clone();
+        web::block(move || fname_tree.insert(filename2, hash)).await?;
 
         Ok((Dup::New, filename))
     }
@@ -386,21 +452,9 @@ impl UploadManager {
     }
 }
 
-fn blocking_delete_all_by_filename(mut dir: PathBuf, filename: &str) -> Result<(), UploadError> {
-    for res in std::fs::read_dir(dir.clone())? {
-        let entry = res?;
-
-        if entry.path().is_dir() {
-            blocking_delete_all_by_filename(entry.path(), filename)?;
-        }
-    }
-
-    dir.push(filename);
-
-    if dir.is_file() {
-        std::fs::remove_file(dir)?;
-    }
-
+async fn remove_path(path: sled::IVec) -> Result<(), UploadError> {
+    let path_string = String::from_utf8(path.to_vec())?;
+    actix_fs::remove_file(path_string).await?;
     Ok(())
 }
 
@@ -437,6 +491,23 @@ fn alias_id_key(alias: &str) -> String {
 
 fn delete_key(alias: &str) -> String {
     format!("{}/delete", alias)
+}
+
+fn variant_key(hash: &[u8], path: &str) -> Vec<u8> {
+    let mut key = hash.to_vec();
+    key.extend(&[2]);
+    key.extend(path.as_bytes());
+    key
+}
+
+fn variant_key_bounds(hash: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    let mut start = hash.to_vec();
+    start.extend(&[2]);
+
+    let mut end = hash.to_vec();
+    end.extend(&[3]);
+
+    (start, end)
 }
 
 fn valid_format(format: image::ImageFormat) -> Result<mime::Mime, UploadError> {

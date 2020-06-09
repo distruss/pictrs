@@ -58,6 +58,9 @@ pub enum UploadError {
 
     #[error("No filename provided in request")]
     MissingFilename,
+
+    #[error("Error converting Path to String")]
+    Path,
 }
 
 impl From<actix_web::client::SendRequestError> for UploadError {

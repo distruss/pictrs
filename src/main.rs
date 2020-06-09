@@ -213,6 +213,11 @@ async fn serve(
 
         // Save the file in another task, we want to return the thumbnail now
         actix_rt::spawn(async move {
+            if let Err(e) = manager.store_variant(path2.clone()).await {
+                error!("Error storing variant, {}", e);
+                return;
+            }
+
             if let Err(e) = safe_save_file(path2, img_bytes2).await {
                 error!("Error saving file, {}", e);
             }
