@@ -1,0 +1,12 @@
+{
+  "name": "pict-rs-js",
+  "version": "1.0.0",
+  "main": "client.js",
+  "repository": "https://git.asonix.dog/Dessalines/pict-rs",
+  "author": "Dessalines <tyhou13@gmx.com>",
+  "license": "MIT",
+  "dependencies": {
+    "form-data": "^3.0.0",
+    "node-fetch": "^2.6.0"
+  }
+}
