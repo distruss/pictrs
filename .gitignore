@@ -1,4 +1,4 @@
 /target
 /data
 /docker/dev/volumes
-/js_client/node_modules
+/client-examples/javascript/node_modules

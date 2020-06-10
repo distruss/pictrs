@@ -7,7 +7,7 @@ import asyncio
 import aiofiles
 import aiohttp
 
-file_name = 'test.png'
+file_name = '../test.png'
 url = 'http://localhost:8080/image'
 
 async def file_sender(file_name=None):
