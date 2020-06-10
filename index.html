@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <title>Upload Images</title>
+    </head>
+    <body>
+        <form method="post" action="/image" enctype="multipart/form-data">
+            <legend>Upload images</legend>
+            <label for="images[]">Chose images to upload (PNG, JPG, GIF, BMP)</label>
+            <input
+                type="file"
+                name="images[]"
+                accept="image/png,image/gif,image/jpeg,image/bmp,.jpg,.jpeg,.png,.gif,.bmp"
+                multiple
+            />
+            <button>Upload</button>
+        </form>
+    </body>
+</html>
