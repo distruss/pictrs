@@ -369,8 +369,8 @@ impl UploadManager {
     async fn hash(&self, bytes: bytes::Bytes) -> Result<Vec<u8>, UploadError> {
         let mut hasher = self.inner.hasher.clone();
         let hash = web::block(move || {
-            hasher.input(&bytes);
-            Ok(hasher.result().to_vec()) as Result<_, UploadError>
+            hasher.update(&bytes);
+            Ok(hasher.finalize_reset().to_vec()) as Result<_, UploadError>
         })
         .await?;
 
