@@ -61,6 +61,9 @@ pub enum UploadError {
 
     #[error("Error converting Path to String")]
     Path,
+
+    #[error("Tried to save an image with an already-taken name")]
+    DuplicateAlias,
 }
 
 impl From<actix_web::client::SendRequestError> for UploadError {
@@ -99,9 +102,10 @@ where
 impl ResponseError for UploadError {
     fn status_code(&self) -> StatusCode {
         match self {
-            UploadError::NoFiles | UploadError::ContentType(_) | UploadError::Upload(_) => {
-                StatusCode::BAD_REQUEST
-            }
+            UploadError::DuplicateAlias
+            | UploadError::NoFiles
+            | UploadError::ContentType(_)
+            | UploadError::Upload(_) => StatusCode::BAD_REQUEST,
             UploadError::MissingAlias | UploadError::MissingFilename => StatusCode::NOT_FOUND,
             UploadError::InvalidToken => StatusCode::FORBIDDEN,
             _ => StatusCode::INTERNAL_SERVER_ERROR,

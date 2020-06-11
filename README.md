@@ -4,21 +4,26 @@ _a simple image hosting service_
 ## Usage
 ### Running
 ```
-pict-rs 0.1.0
+pict-rs 0.1.3
 
 USAGE:
-    pict-rs [OPTIONS] --addr <addr> --path <path>
+    pict-rs [FLAGS] [OPTIONS] --path <path>
 
 FLAGS:
-    -h, --help       Prints help information
-    -V, --version    Prints version information
+    -h, --help                     Prints help information
+    -s, --skip-validate-imports    Whether to skip validating images uploaded via the internal import API
+    -V, --version                  Prints version information
 
 OPTIONS:
-    -a, --addr <addr>                 The address and port the server binds to, e.g. 127.0.0.1:80
-    -f, --format <format>             An image format to convert all uploaded files into, supports 'jpg' and 'png'
-    -p, --path <path>                 The path to the data directory, e.g. data/
-    -w, --whitelist <whitelist>...    An optional list of filters to whitelist, supports 'identity', 'thumbnail', and
-                                      'blur'
+    -a, --addr <addr>                      The address and port the server binds to. Default: 0.0.0.0:8080 [env:
+                                           PICTRS_ADDR=]  [default: 0.0.0.0:8080]
+    -f, --format <format>                  An optional image format to convert all uploaded files into, supports 'jpg'
+                                           and 'png' [env: PICTRS_FORMAT=]
+    -m, --max-file-size <max-file-size>    Specify the maximum allowed uploaded file size (in Megabytes) [env:
+                                           PICTRS_MAX_FILE_SIZE=]  [default: 40]
+    -p, --path <path>                      The path to the data directory, e.g. data/ [env: PICTRS_PATH=]
+    -w, --whitelist <whitelist>...         An optional list of filters to whitelist, supports 'identity', 'thumbnail',
+                                           and 'blur' [env: PICTRS_FILTER_WHITELIST=]
 ```
 
 #### Example:
@@ -80,6 +85,9 @@ pict-rs offers four endpoints:
         "msg": "ok"
     }
     ```
+- `POST /import` for uploading an image while preserving the filename. This should not be exposed to
+    the public internet, as it can cause naming conflicts with saved files. The upload format and
+    response format are the same as the `POST /image` endpoint.
 - `GET /image/download?url=...` Download an image from a remote server, returning the same JSON
     payload as the `POST` endpoint
 - `GET /image/{file}` for getting a full-resolution image. `file` here is the `file` key from the

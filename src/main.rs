@@ -270,7 +270,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let manager2 = manager.clone();
     let form = Form::new()
         .max_files(10)
-        .max_file_size(40 * MEGABYTES)
+        .max_file_size(config.max_file_size() * MEGABYTES)
         .field(
             "images",
             Field::array(Field::file(move |_, _, stream| {
@@ -282,6 +282,32 @@ async fn main() -> Result<(), anyhow::Error> {
                         path.push(alias);
                         Some(path)
                     })
+                }
+            })),
+        );
+
+    // Create a new Multipart Form validator for internal imports
+    //
+    // This form is expecting a single array field, 'images' with at most 10 files in it
+    let validate_imports = config.validate_imports();
+    let manager2 = manager.clone();
+    let import_form = Form::new()
+        .max_files(10)
+        .max_file_size(config.max_file_size() * MEGABYTES)
+        .field(
+            "images",
+            Field::array(Field::file(move |filename, content_type, stream| {
+                let manager = manager2.clone();
+
+                async move {
+                    manager
+                        .import(filename, content_type, validate_imports, stream)
+                        .await
+                        .map(|alias| {
+                            let mut path = PathBuf::new();
+                            path.push(alias);
+                            Some(path)
+                        })
                 }
             })),
         );
@@ -315,6 +341,11 @@ async fn main() -> Result<(), anyhow::Error> {
                             .route(web::get().to(delete)),
                     )
                     .service(web::resource("/{tail:.*}").route(web::get().to(serve))),
+            )
+            .service(
+                web::resource("/import")
+                    .wrap(import_form.clone())
+                    .route(web::post().to(upload)),
             )
     })
     .bind(config.bind_address())?

@@ -5,6 +5,13 @@ pub(crate) struct Config {
     #[structopt(
         short,
         long,
+        help = "Whether to skip validating images uploaded via the internal import API"
+    )]
+    skip_validate_imports: bool,
+
+    #[structopt(
+        short,
+        long,
         env = "PICTRS_ADDR",
         default_value = "0.0.0.0:8080",
         help = "The address and port the server binds to. Default: 0.0.0.0:8080"
@@ -12,10 +19,11 @@ pub(crate) struct Config {
     addr: SocketAddr,
 
     #[structopt(
-      short, 
-      long, 
-      env = "PICTRS_PATH",
-      help = "The path to the data directory, e.g. data/")]
+        short,
+        long,
+        env = "PICTRS_PATH",
+        help = "The path to the data directory, e.g. data/"
+    )]
     path: PathBuf,
 
     #[structopt(
@@ -33,6 +41,15 @@ pub(crate) struct Config {
         help = "An optional list of filters to whitelist, supports 'identity', 'thumbnail', and 'blur'"
     )]
     whitelist: Option<Vec<String>>,
+
+    #[structopt(
+        short,
+        long,
+        env = "PICTRS_MAX_FILE_SIZE",
+        help = "Specify the maximum allowed uploaded file size (in Megabytes)",
+        default_value = "40"
+    )]
+    max_file_size: usize,
 }
 
 impl Config {
@@ -52,6 +69,14 @@ impl Config {
         self.whitelist
             .as_ref()
             .map(|wl| wl.iter().cloned().collect())
+    }
+
+    pub(crate) fn validate_imports(&self) -> bool {
+        !self.skip_validate_imports
+    }
+
+    pub(crate) fn max_file_size(&self) -> usize {
+        self.max_file_size
     }
 }
 
