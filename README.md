@@ -103,7 +103,7 @@ pict-rs offers four endpoints:
     ```
     which would create a 256x256px
     thumbnail and blur it
-- `DELETE /image/{delete_token}/{file}` or `GET /image/{delete_token}/{file}` to delete a file,
+- `DELETE /image/delete/{delete_token}/{file}` or `GET /image/delete/{delete_token}/{file}` to delete a file,
     where `delete_token` and `file` are from the `/image` endpoint's JSON
 
 ## Contributing
