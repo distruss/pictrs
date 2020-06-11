@@ -1,4 +1,4 @@
-use crate::{config::Format, error::UploadError, safe_save_file, to_ext, ACCEPTED_MIMES};
+use crate::{config::Format, error::UploadError, safe_save_file, to_ext, validate::validate_image};
 use actix_web::web;
 use futures::stream::{Stream, StreamExt};
 use log::{error, warn};
@@ -206,7 +206,8 @@ impl UploadManager {
         let bytes = read_stream(stream).await?;
 
         let (bytes, content_type) = if validate {
-            self.validate_image(bytes).await?
+            let format = self.inner.format.clone();
+            validate_image(bytes, format).await?
         } else {
             (bytes, content_type)
         };
@@ -233,7 +234,8 @@ impl UploadManager {
         let bytes = read_stream(stream).await?;
 
         // -- VALIDATE IMAGE --
-        let (bytes, content_type) = self.validate_image(bytes).await?;
+        let format = self.inner.format.clone();
+        let (bytes, content_type) = validate_image(bytes, format).await?;
 
         // -- DUPLICATE CHECKS --
 
@@ -329,40 +331,6 @@ impl UploadManager {
         safe_save_file(real_path, bytes).await?;
 
         Ok(())
-    }
-
-    // import & export image using the image crate
-    async fn validate_image(
-        &self,
-        bytes: bytes::Bytes,
-    ) -> Result<(bytes::Bytes, mime::Mime), UploadError> {
-        let (img, format) = web::block(move || {
-            let format = image::guess_format(&bytes).map_err(UploadError::InvalidImage)?;
-            let img = image::load_from_memory(&bytes).map_err(UploadError::InvalidImage)?;
-
-            Ok((img, format)) as Result<(image::DynamicImage, image::ImageFormat), UploadError>
-        })
-        .await?;
-
-        let (format, content_type) = self
-            .inner
-            .format
-            .as_ref()
-            .map(|f| (f.to_image_format(), f.to_mime()))
-            .unwrap_or((format.clone(), valid_format(format)?));
-
-        if ACCEPTED_MIMES.iter().all(|valid| *valid != content_type) {
-            return Err(UploadError::ContentType(content_type));
-        }
-
-        let bytes: bytes::Bytes = web::block(move || {
-            let mut bytes = std::io::Cursor::new(vec![]);
-            img.write_to(&mut bytes, format)?;
-            Ok(bytes::Bytes::from(bytes.into_inner())) as Result<bytes::Bytes, UploadError>
-        })
-        .await?;
-
-        Ok((bytes, content_type))
     }
 
     // produce a sh256sum of the uploaded file
@@ -605,14 +573,4 @@ fn variant_key_bounds(hash: &[u8]) -> (Vec<u8>, Vec<u8>) {
     end.extend(&[3]);
 
     (start, end)
-}
-
-fn valid_format(format: image::ImageFormat) -> Result<mime::Mime, UploadError> {
-    match format {
-        image::ImageFormat::Jpeg => Ok(mime::IMAGE_JPEG),
-        image::ImageFormat::Png => Ok(mime::IMAGE_PNG),
-        image::ImageFormat::Gif => Ok(mime::IMAGE_GIF),
-        image::ImageFormat::Bmp => Ok(mime::IMAGE_BMP),
-        _ => Err(UploadError::UnsupportedFormat),
-    }
 }

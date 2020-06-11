@@ -1381,6 +1381,7 @@ dependencies = [
  "bytes",
  "env_logger",
  "futures",
+ "gif",
  "image",
  "log",
  "mime",

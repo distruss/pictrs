@@ -15,15 +15,9 @@ mod config;
 mod error;
 mod processor;
 mod upload_manager;
+mod validate;
 
 use self::{config::Config, error::UploadError, upload_manager::UploadManager};
-
-const ACCEPTED_MIMES: &[mime::Mime] = &[
-    mime::IMAGE_BMP,
-    mime::IMAGE_GIF,
-    mime::IMAGE_JPEG,
-    mime::IMAGE_PNG,
-];
 
 const MEGABYTES: usize = 1024 * 1024;
 const HOURS: u32 = 60 * 60;

@@ -1,10 +1,8 @@
+use crate::validate::GifError;
 use actix_web::{http::StatusCode, HttpResponse, ResponseError};
 
 #[derive(Debug, thiserror::Error)]
-pub enum UploadError {
-    #[error("Invalid content type provided, {0}")]
-    ContentType(mime::Mime),
-
+pub(crate) enum UploadError {
     #[error("Couln't upload file, {0}")]
     Upload(String),
 
@@ -64,6 +62,9 @@ pub enum UploadError {
 
     #[error("Tried to save an image with an already-taken name")]
     DuplicateAlias,
+
+    #[error("Error validating Gif file, {0}")]
+    Gif(#[from] GifError),
 }
 
 impl From<actix_web::client::SendRequestError> for UploadError {
@@ -102,9 +103,9 @@ where
 impl ResponseError for UploadError {
     fn status_code(&self) -> StatusCode {
         match self {
-            UploadError::DuplicateAlias
+            UploadError::Gif(_)
+            | UploadError::DuplicateAlias
             | UploadError::NoFiles
-            | UploadError::ContentType(_)
             | UploadError::Upload(_) => StatusCode::BAD_REQUEST,
             UploadError::MissingAlias | UploadError::MissingFilename => StatusCode::NOT_FOUND,
             UploadError::InvalidToken => StatusCode::FORBIDDEN,
