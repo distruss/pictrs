@@ -265,6 +265,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let form = Form::new()
         .max_files(10)
         .max_file_size(config.max_file_size() * MEGABYTES)
+        .transform_error(|e| UploadError::from(e).into())
         .field(
             "images",
             Field::array(Field::file(move |_, _, stream| {
@@ -288,6 +289,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let import_form = Form::new()
         .max_files(10)
         .max_file_size(config.max_file_size() * MEGABYTES)
+        .transform_error(|e| UploadError::from(e).into())
         .field(
             "images",
             Field::array(Field::file(move |filename, content_type, stream| {
