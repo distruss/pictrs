@@ -2,7 +2,7 @@ version: '3.3'
 
 services:
   pictrs:
-    image: asonix/pictrs:v0.1.5-r0
+    image: asonix/pictrs:v0.1.6-r0
     ports:
       - "127.0.0.1:8080:8080"
     restart: always
