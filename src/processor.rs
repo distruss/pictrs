@@ -1,8 +1,8 @@
 use crate::error::UploadError;
 use actix_web::web;
 use image::{DynamicImage, GenericImageView};
-use log::debug;
 use std::{collections::HashSet, path::PathBuf};
+use tracing::{debug, instrument};
 
 pub(crate) trait Processor {
     fn name() -> &'static str
@@ -141,11 +141,40 @@ macro_rules! parse {
     }};
 }
 
-pub(crate) fn build_chain(
-    args: &[String],
-    whitelist: Option<&HashSet<String>>,
-) -> Vec<Box<dyn Processor + Send>> {
-    args.into_iter()
+pub(crate) struct ProcessChain {
+    inner: Vec<Box<dyn Processor + Send>>,
+}
+
+impl std::fmt::Debug for ProcessChain {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.debug_struct("ProcessChain")
+            .field("inner", &format!("{} operations", self.inner.len()))
+            .finish()
+    }
+}
+
+pub(crate) struct ImageWrapper {
+    pub(crate) inner: DynamicImage,
+}
+
+impl From<DynamicImage> for ImageWrapper {
+    fn from(inner: DynamicImage) -> Self {
+        ImageWrapper { inner }
+    }
+}
+
+impl std::fmt::Debug for ImageWrapper {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.debug_struct("ImageWrapper")
+            .field("inner", &"DynamicImage".to_string())
+            .finish()
+    }
+}
+
+#[instrument]
+pub(crate) fn build_chain(args: &[String], whitelist: Option<&HashSet<String>>) -> ProcessChain {
+    let inner = args
+        .into_iter()
         .filter_map(|arg| {
             parse!(Identity, arg.as_str(), whitelist);
             parse!(Thumbnail, arg.as_str(), whitelist);
@@ -155,27 +184,30 @@ pub(crate) fn build_chain(
 
             None
         })
-        .collect()
+        .collect();
+
+    ProcessChain { inner }
 }
 
-pub(crate) fn build_path(
-    base: PathBuf,
-    args: &[Box<dyn Processor + Send>],
-    filename: String,
-) -> PathBuf {
-    let mut path = args.iter().fold(base, |acc, processor| processor.path(acc));
+pub(crate) fn build_path(base: PathBuf, chain: &ProcessChain, filename: String) -> PathBuf {
+    let mut path = chain
+        .inner
+        .iter()
+        .fold(base, |acc, processor| processor.path(acc));
 
     path.push(filename);
     path
 }
 
+#[instrument]
 pub(crate) async fn process_image(
-    args: Vec<Box<dyn Processor + Send>>,
-    mut img: DynamicImage,
-) -> Result<DynamicImage, UploadError> {
-    for processor in args.into_iter() {
-        img = web::block(move || processor.process(img)).await?;
+    chain: ProcessChain,
+    img: ImageWrapper,
+) -> Result<ImageWrapper, UploadError> {
+    let mut inner = img.inner;
+    for processor in chain.inner.into_iter() {
+        inner = web::block(move || processor.process(inner)).await?;
     }
 
-    Ok(img)
+    Ok(inner.into())
 }

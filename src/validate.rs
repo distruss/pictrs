@@ -3,6 +3,7 @@ use actix_web::web;
 use bytes::Bytes;
 use image::{ImageDecoder, ImageEncoder, ImageFormat};
 use std::io::Cursor;
+use tracing::debug;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum GifError {
@@ -31,13 +32,16 @@ pub(crate) async fn validate_image(
 
         let format = image::guess_format(&bytes).map_err(UploadError::InvalidImage)?;
 
-        match format {
+        debug!("Validating {:?}", format);
+        let res = match format {
             ImageFormat::Png => Ok((validate_png(bytes)?, mime::IMAGE_PNG)),
             ImageFormat::Jpeg => Ok((validate_jpg(bytes)?, mime::IMAGE_JPEG)),
             ImageFormat::Bmp => Ok((validate_bmp(bytes)?, mime::IMAGE_BMP)),
             ImageFormat::Gif => Ok((validate_gif(bytes)?, mime::IMAGE_GIF)),
             _ => Err(UploadError::UnsupportedFormat),
-        }
+        };
+        debug!("Validated");
+        res
     })
     .await?;
 

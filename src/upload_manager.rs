@@ -1,9 +1,9 @@
 use crate::{config::Format, error::UploadError, safe_save_file, to_ext, validate::validate_image};
 use actix_web::web;
 use futures::stream::{Stream, StreamExt};
-use log::{error, warn};
 use sha2::Digest;
 use std::{path::PathBuf, pin::Pin, sync::Arc};
+use tracing::{debug, error, instrument, warn};
 
 #[derive(Clone)]
 pub struct UploadManager {
@@ -19,7 +19,39 @@ struct UploadManagerInner {
     db: sled::Db,
 }
 
-type UploadStream<E> = Pin<Box<dyn Stream<Item = Result<bytes::Bytes, E>>>>;
+impl std::fmt::Debug for UploadManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.debug_struct("UploadManager")
+            .field("inner", &format!("Arc<UploadManagerInner>"))
+            .finish()
+    }
+}
+
+type StreamAlias<E> = Pin<Box<dyn Stream<Item = Result<bytes::Bytes, E>>>>;
+
+pub(crate) struct UploadStream<E> {
+    inner: StreamAlias<E>,
+}
+
+impl<E> UploadStream<E> {
+    pub(crate) fn new(s: StreamAlias<E>) -> Self {
+        UploadStream { inner: s }
+    }
+}
+
+impl<E> From<StreamAlias<E>> for UploadStream<E> {
+    fn from(s: StreamAlias<E>) -> Self {
+        UploadStream { inner: s }
+    }
+}
+
+impl<E> std::fmt::Debug for UploadStream<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.debug_struct("UploadStream")
+            .field("inner", &"stream".to_string())
+            .finish()
+    }
+}
 
 enum Dup {
     Exists,
@@ -162,12 +194,16 @@ impl UploadManager {
     }
 
     /// Generate a delete token for an alias
+    #[instrument]
     pub(crate) async fn delete_token(&self, alias: String) -> Result<String, UploadError> {
+        debug!("Generating delete token");
         use rand::distributions::{Alphanumeric, Distribution};
         let rng = rand::thread_rng();
         let s: String = Alphanumeric.sample_iter(rng).take(10).collect();
         let delete_token = s.clone();
+        debug!("Generated delete token");
 
+        debug!("Saving delete token");
         let alias_tree = self.inner.alias_tree.clone();
         let key = delete_key(&alias);
         let res = web::block(move || {
@@ -178,6 +214,7 @@ impl UploadManager {
             )
         })
         .await?;
+        debug!("Delete token saved");
 
         if let Err(sled::CompareAndSwapError {
             current: Some(ivec),
@@ -226,25 +263,36 @@ impl UploadManager {
     }
 
     /// Upload the file, discarding bytes if it's already present, or saving if it's new
+    #[instrument]
     pub(crate) async fn upload<E>(&self, stream: UploadStream<E>) -> Result<String, UploadError>
     where
         UploadError: From<E>,
     {
         // -- READ IN BYTES FROM CLIENT --
+        debug!("Reading stream");
         let bytes = read_stream(stream).await?;
+        debug!("Read stream");
 
         // -- VALIDATE IMAGE --
+        debug!("Validating image");
         let format = self.inner.format.clone();
         let (bytes, content_type) = validate_image(bytes, format).await?;
+        debug!("Image validated");
 
         // -- DUPLICATE CHECKS --
 
         // Cloning bytes is fine because it's actually a pointer
+        debug!("Hashing bytes");
         let hash = self.hash(bytes.clone()).await?;
+        debug!("Bytes hashed");
 
+        debug!("Adding alias");
         let alias = self.add_alias(&hash, content_type.clone()).await?;
+        debug!("Alias added");
 
+        debug!("Saving file");
         self.save_upload(bytes, hash, content_type).await?;
+        debug!("File saved");
 
         // Return alias to file
         Ok(alias)
@@ -346,6 +394,7 @@ impl UploadManager {
     }
 
     // check for an already-uploaded image with this hash, returning the path to the target file
+    #[instrument]
     async fn check_duplicate(
         &self,
         hash: Vec<u8>,
@@ -382,6 +431,7 @@ impl UploadManager {
     }
 
     // generate a short filename that isn't already in-use
+    #[instrument]
     async fn next_file(&self, content_type: mime::Mime) -> Result<String, UploadError> {
         let image_dir = self.image_dir();
         use rand::distributions::{Alphanumeric, Distribution};
@@ -417,6 +467,7 @@ impl UploadManager {
     // Add an alias to an existing file
     //
     // This will help if multiple 'users' upload the same file, and one of them wants to delete it
+    #[instrument]
     async fn add_alias(
         &self,
         hash: &[u8],
@@ -432,6 +483,7 @@ impl UploadManager {
     // Add a pre-defined alias to an existin file
     //
     // DANGER: this can cause BAD BAD BAD conflicts if the same alias is used for multiple files
+    #[instrument]
     async fn store_alias(&self, hash: &[u8], alias: &str) -> Result<(), UploadError> {
         let alias = alias.to_string();
         loop {
@@ -504,10 +556,12 @@ impl UploadManager {
     }
 }
 
-async fn read_stream<E>(mut stream: UploadStream<E>) -> Result<bytes::Bytes, UploadError>
+#[instrument]
+async fn read_stream<E>(stream: UploadStream<E>) -> Result<bytes::Bytes, UploadError>
 where
     UploadError: From<E>,
 {
+    let mut stream = stream.inner;
     let mut bytes = bytes::BytesMut::new();
 
     while let Some(res) = stream.next().await {

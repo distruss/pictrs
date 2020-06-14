@@ -7,17 +7,24 @@ use actix_web::{
     web, App, HttpResponse, HttpServer,
 };
 use futures::stream::{Stream, TryStreamExt};
-use log::{error, info};
 use std::{collections::HashSet, path::PathBuf};
 use structopt::StructOpt;
+use tracing::{debug, error, info, instrument};
+use tracing_subscriber::EnvFilter;
 
 mod config;
 mod error;
+mod middleware;
 mod processor;
 mod upload_manager;
 mod validate;
 
-use self::{config::Config, error::UploadError, upload_manager::UploadManager};
+use self::{
+    config::Config,
+    error::UploadError,
+    middleware::Tracing,
+    upload_manager::{UploadManager, UploadStream},
+};
 
 const MEGABYTES: usize = 1024 * 1024;
 const HOURS: u32 = 60 * 60;
@@ -26,10 +33,12 @@ const HOURS: u32 = 60 * 60;
 async fn safe_save_file(path: PathBuf, bytes: bytes::Bytes) -> Result<(), UploadError> {
     if let Some(path) = path.parent() {
         // create the directory for the file
+        debug!("Creating directory");
         actix_fs::create_dir_all(path.to_owned()).await?;
     }
 
     // Only write the file if it doesn't already exist
+    debug!("Checking if file already exists");
     if let Err(e) = actix_fs::metadata(path.clone()).await {
         if e.kind() != Some(std::io::ErrorKind::NotFound) {
             return Err(e.into());
@@ -39,15 +48,18 @@ async fn safe_save_file(path: PathBuf, bytes: bytes::Bytes) -> Result<(), Upload
     }
 
     // Open the file for writing
+    debug!("Creating file");
     let file = actix_fs::file::create(path.clone()).await?;
 
     // try writing
+    debug!("Writing to file");
     if let Err(e) = actix_fs::file::write(file, bytes).await {
         error!("Error writing file, {}", e);
         // remove file if writing failed before completion
         actix_fs::remove_file(path).await?;
         return Err(e.into());
     }
+    debug!("File written");
 
     Ok(())
 }
@@ -74,6 +86,7 @@ fn from_ext(ext: std::ffi::OsString) -> mime::Mime {
 }
 
 /// Handle responding to succesful uploads
+#[instrument]
 async fn upload(
     value: Value,
     manager: web::Data<UploadManager>,
@@ -123,7 +136,7 @@ async fn download(
 
     let stream = Box::pin(futures::stream::once(fut));
 
-    let alias = manager.upload(stream).await?;
+    let alias = manager.upload(UploadStream::new(stream)).await?;
     let delete_token = manager.delete_token(alias.clone()).await?;
 
     Ok(HttpResponse::Created().json(serde_json::json!({
@@ -147,6 +160,7 @@ async fn delete(
 }
 
 /// Serve files
+#[instrument]
 async fn serve(
     segments: web::Path<String>,
     manager: web::Data<UploadManager>,
@@ -159,7 +173,9 @@ async fn serve(
         .collect();
     let alias = segments.pop().ok_or(UploadError::MissingFilename)?;
 
+    debug!("Building chain");
     let chain = self::processor::build_chain(&segments, whitelist.as_ref().as_ref());
+    debug!("Chain built");
 
     let name = manager.from_alias(alias).await?;
     let base = manager.image_dir();
@@ -184,23 +200,32 @@ async fn serve(
         // Read the image file & produce a DynamicImage
         //
         // Drop bytes so we don't keep it around in memory longer than we need to
+        debug!("Reading image");
         let (img, format) = {
             let bytes = actix_fs::read(original_path.clone()).await?;
-            let format = image::guess_format(&bytes)?;
+            let bytes2 = bytes.clone();
+            let format = web::block(move || image::guess_format(&bytes2)).await?;
             let img = web::block(move || image::load_from_memory(&bytes)).await?;
 
             (img, format)
         };
+        debug!("Image read");
 
-        let img = self::processor::process_image(chain, img).await?;
+        debug!("Processing image");
+        let img = self::processor::process_image(chain, img.into())
+            .await?
+            .inner;
+        debug!("Image processed");
 
         // perform thumbnail operation in a blocking thread
+        debug!("Exporting image");
         let img_bytes: bytes::Bytes = web::block(move || {
             let mut bytes = std::io::Cursor::new(vec![]);
             img.write_to(&mut bytes, format)?;
             Ok(bytes::Bytes::from(bytes.into_inner())) as Result<_, image::error::ImageError>
         })
         .await?;
+        debug!("Image exported");
 
         let path2 = path.clone();
         let img_bytes2 = img_bytes.clone();
@@ -254,8 +279,15 @@ struct UrlQuery {
 #[actix_rt::main]
 async fn main() -> Result<(), anyhow::Error> {
     let config = Config::from_args();
-    std::env::set_var("RUST_LOG", "info");
-    env_logger::init();
+
+    if std::env::var("RUST_LOG").is_err() {
+        std::env::set_var("RUST_LOG", "info");
+    }
+
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
+
     let manager = UploadManager::new(config.data_dir(), config.format()).await?;
 
     // Create a new Multipart Form validator
@@ -272,7 +304,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 let manager = manager2.clone();
 
                 async move {
-                    manager.upload(stream).await.map(|alias| {
+                    manager.upload(stream.into()).await.map(|alias| {
                         let mut path = PathBuf::new();
                         path.push(alias);
                         Some(path)
@@ -297,7 +329,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
                 async move {
                     manager
-                        .import(filename, content_type, validate_imports, stream)
+                        .import(filename, content_type, validate_imports, stream.into())
                         .await
                         .map(|alias| {
                             let mut path = PathBuf::new();
@@ -317,8 +349,9 @@ async fn main() -> Result<(), anyhow::Error> {
         let config = config2.clone();
 
         App::new()
-            .wrap(Logger::default())
             .wrap(Compress::default())
+            .wrap(Logger::default())
+            .wrap(Tracing)
             .data(manager.clone())
             .data(client)
             .data(config.filter_whitelist())
