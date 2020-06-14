@@ -7,9 +7,10 @@ use actix_web::{
     web, App, HttpResponse, HttpServer,
 };
 use futures::stream::{Stream, TryStreamExt};
+use once_cell::sync::Lazy;
 use std::{collections::HashSet, path::PathBuf};
 use structopt::StructOpt;
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info, instrument, Span};
 use tracing_subscriber::EnvFilter;
 
 mod config;
@@ -20,25 +21,25 @@ mod upload_manager;
 mod validate;
 
 use self::{
-    config::Config,
-    error::UploadError,
-    middleware::Tracing,
-    upload_manager::{UploadManager, UploadStream},
+    config::Config, error::UploadError, middleware::Tracing, upload_manager::UploadManager,
 };
 
 const MEGABYTES: usize = 1024 * 1024;
 const HOURS: u32 = 60 * 60;
 
+static CONFIG: Lazy<Config> = Lazy::new(|| Config::from_args());
+
 // Try writing to a file
+#[instrument(skip(bytes))]
 async fn safe_save_file(path: PathBuf, bytes: bytes::Bytes) -> Result<(), UploadError> {
     if let Some(path) = path.parent() {
         // create the directory for the file
-        debug!("Creating directory");
+        debug!("Creating directory {:?}", path);
         actix_fs::create_dir_all(path.to_owned()).await?;
     }
 
     // Only write the file if it doesn't already exist
-    debug!("Checking if file already exists");
+    debug!("Checking if {:?} already exists", path);
     if let Err(e) = actix_fs::metadata(path.clone()).await {
         if e.kind() != Some(std::io::ErrorKind::NotFound) {
             return Err(e.into());
@@ -48,18 +49,18 @@ async fn safe_save_file(path: PathBuf, bytes: bytes::Bytes) -> Result<(), Upload
     }
 
     // Open the file for writing
-    debug!("Creating file");
+    debug!("Creating {:?}", path);
     let file = actix_fs::file::create(path.clone()).await?;
 
     // try writing
-    debug!("Writing to file");
+    debug!("Writing to {:?}", path);
     if let Err(e) = actix_fs::file::write(file, bytes).await {
-        error!("Error writing file, {}", e);
+        error!("Error writing {:?}, {}", path, e);
         // remove file if writing failed before completion
         actix_fs::remove_file(path).await?;
         return Err(e.into());
     }
-    debug!("File written");
+    debug!("{:?} written", path);
 
     Ok(())
 }
@@ -86,7 +87,7 @@ fn from_ext(ext: std::ffi::OsString) -> mime::Mime {
 }
 
 /// Handle responding to succesful uploads
-#[instrument]
+#[instrument(skip(manager))]
 async fn upload(
     value: Value,
     manager: web::Data<UploadManager>,
@@ -121,6 +122,7 @@ async fn upload(
 }
 
 /// download an image from a URL
+#[instrument(skip(client, manager))]
 async fn download(
     client: web::Data<Client>,
     manager: web::Data<UploadManager>,
@@ -132,11 +134,11 @@ async fn download(
         return Err(UploadError::Download(res.status()));
     }
 
-    let fut = res.body().limit(40 * MEGABYTES);
+    let fut = res.body().limit(CONFIG.max_file_size() * MEGABYTES);
 
     let stream = Box::pin(futures::stream::once(fut));
 
-    let alias = manager.upload(UploadStream::new(stream)).await?;
+    let alias = manager.upload(stream).await?;
     let delete_token = manager.delete_token(alias.clone()).await?;
 
     Ok(HttpResponse::Created().json(serde_json::json!({
@@ -148,6 +150,7 @@ async fn download(
     })))
 }
 
+#[instrument(skip(manager))]
 async fn delete(
     manager: web::Data<UploadManager>,
     path_entries: web::Path<(String, String)>,
@@ -160,7 +163,7 @@ async fn delete(
 }
 
 /// Serve files
-#[instrument]
+#[instrument(skip(manager))]
 async fn serve(
     segments: web::Path<String>,
     manager: web::Data<UploadManager>,
@@ -209,13 +212,9 @@ async fn serve(
 
             (img, format)
         };
-        debug!("Image read");
 
         debug!("Processing image");
-        let img = self::processor::process_image(chain, img.into())
-            .await?
-            .inner;
-        debug!("Image processed");
+        let img = self::processor::process_image(chain, img).await?;
 
         // perform thumbnail operation in a blocking thread
         debug!("Exporting image");
@@ -225,13 +224,15 @@ async fn serve(
             Ok(bytes::Bytes::from(bytes.into_inner())) as Result<_, image::error::ImageError>
         })
         .await?;
-        debug!("Image exported");
 
         let path2 = path.clone();
         let img_bytes2 = img_bytes.clone();
 
         // Save the file in another task, we want to return the thumbnail now
+        debug!("Spawning storage task");
+        let span = Span::current();
         actix_rt::spawn(async move {
+            let entered = span.enter();
             if let Err(e) = manager.store_variant(path2.clone()).await {
                 error!("Error storing variant, {}", e);
                 return;
@@ -240,6 +241,7 @@ async fn serve(
             if let Err(e) = safe_save_file(path2, img_bytes2).await {
                 error!("Error saving file, {}", e);
             }
+            drop(entered);
         });
 
         return Ok(srv_response(
@@ -278,8 +280,6 @@ struct UrlQuery {
 
 #[actix_rt::main]
 async fn main() -> Result<(), anyhow::Error> {
-    let config = Config::from_args();
-
     if std::env::var("RUST_LOG").is_err() {
         std::env::set_var("RUST_LOG", "info");
     }
@@ -288,7 +288,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
-    let manager = UploadManager::new(config.data_dir(), config.format()).await?;
+    let manager = UploadManager::new(CONFIG.data_dir(), CONFIG.format()).await?;
 
     // Create a new Multipart Form validator
     //
@@ -296,7 +296,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let manager2 = manager.clone();
     let form = Form::new()
         .max_files(10)
-        .max_file_size(config.max_file_size() * MEGABYTES)
+        .max_file_size(CONFIG.max_file_size() * MEGABYTES)
         .transform_error(|e| UploadError::from(e).into())
         .field(
             "images",
@@ -304,7 +304,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 let manager = manager2.clone();
 
                 async move {
-                    manager.upload(stream.into()).await.map(|alias| {
+                    manager.upload(stream).await.map(|alias| {
                         let mut path = PathBuf::new();
                         path.push(alias);
                         Some(path)
@@ -316,11 +316,11 @@ async fn main() -> Result<(), anyhow::Error> {
     // Create a new Multipart Form validator for internal imports
     //
     // This form is expecting a single array field, 'images' with at most 10 files in it
-    let validate_imports = config.validate_imports();
+    let validate_imports = CONFIG.validate_imports();
     let manager2 = manager.clone();
     let import_form = Form::new()
         .max_files(10)
-        .max_file_size(config.max_file_size() * MEGABYTES)
+        .max_file_size(CONFIG.max_file_size() * MEGABYTES)
         .transform_error(|e| UploadError::from(e).into())
         .field(
             "images",
@@ -329,7 +329,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
                 async move {
                     manager
-                        .import(filename, content_type, validate_imports, stream.into())
+                        .import(filename, content_type, validate_imports, stream)
                         .await
                         .map(|alias| {
                             let mut path = PathBuf::new();
@@ -340,13 +340,10 @@ async fn main() -> Result<(), anyhow::Error> {
             })),
         );
 
-    let config2 = config.clone();
     HttpServer::new(move || {
         let client = Client::build()
             .header("User-Agent", "pict-rs v0.1.0-master")
             .finish();
-
-        let config = config2.clone();
 
         App::new()
             .wrap(Compress::default())
@@ -354,7 +351,7 @@ async fn main() -> Result<(), anyhow::Error> {
             .wrap(Tracing)
             .data(manager.clone())
             .data(client)
-            .data(config.filter_whitelist())
+            .data(CONFIG.filter_whitelist())
             .service(
                 web::scope("/image")
                     .service(
@@ -377,7 +374,7 @@ async fn main() -> Result<(), anyhow::Error> {
                     .route(web::post().to(upload)),
             )
     })
-    .bind(config.bind_address())?
+    .bind(CONFIG.bind_address())?
     .run()
     .await?;
 

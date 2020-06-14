@@ -3,7 +3,7 @@ use actix_web::web;
 use bytes::Bytes;
 use image::{ImageDecoder, ImageEncoder, ImageFormat};
 use std::io::Cursor;
-use tracing::debug;
+use tracing::{debug, instrument, Span};
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum GifError {
@@ -15,18 +15,26 @@ pub(crate) enum GifError {
 }
 
 // import & export image using the image crate
+#[instrument(skip(bytes))]
 pub(crate) async fn validate_image(
     bytes: Bytes,
     prescribed_format: Option<Format>,
 ) -> Result<(Bytes, mime::Mime), UploadError> {
+    let span = Span::current();
+
     let tup = web::block(move || {
+        let entered = span.enter();
         if let Some(prescribed) = prescribed_format {
+            debug!("Load from memory");
             let img = image::load_from_memory(&bytes).map_err(UploadError::InvalidImage)?;
+            debug!("Loaded");
 
             let mime = prescribed.to_mime();
 
+            debug!("Writing");
             let mut bytes = Cursor::new(vec![]);
             img.write_to(&mut bytes, prescribed.to_image_format())?;
+            debug!("Written");
             return Ok((Bytes::from(bytes.into_inner()), mime));
         }
 
@@ -41,6 +49,7 @@ pub(crate) async fn validate_image(
             _ => Err(UploadError::UnsupportedFormat),
         };
         debug!("Validated");
+        drop(entered);
         res
     })
     .await?;
@@ -48,6 +57,7 @@ pub(crate) async fn validate_image(
     Ok(tup)
 }
 
+#[instrument(skip(bytes))]
 fn validate_png(bytes: Bytes) -> Result<Bytes, UploadError> {
     let decoder = image::png::PngDecoder::new(Cursor::new(&bytes))?;
 
@@ -58,6 +68,7 @@ fn validate_png(bytes: Bytes) -> Result<Bytes, UploadError> {
     Ok(Bytes::from(bytes.into_inner()))
 }
 
+#[instrument(skip(bytes))]
 fn validate_jpg(bytes: Bytes) -> Result<Bytes, UploadError> {
     let decoder = image::jpeg::JpegDecoder::new(Cursor::new(&bytes))?;
 
@@ -68,6 +79,7 @@ fn validate_jpg(bytes: Bytes) -> Result<Bytes, UploadError> {
     Ok(Bytes::from(bytes.into_inner()))
 }
 
+#[instrument(skip(bytes))]
 fn validate_bmp(bytes: Bytes) -> Result<Bytes, UploadError> {
     let decoder = image::bmp::BmpDecoder::new(Cursor::new(&bytes))?;
 
@@ -78,6 +90,7 @@ fn validate_bmp(bytes: Bytes) -> Result<Bytes, UploadError> {
     Ok(Bytes::from(bytes.into_inner()))
 }
 
+#[instrument(skip(bytes))]
 fn validate_gif(bytes: Bytes) -> Result<Bytes, GifError> {
     use gif::{Parameter, SetParameter};
 
@@ -98,6 +111,7 @@ fn validate_gif(bytes: Bytes) -> Result<Bytes, GifError> {
         gif::Repeat::Infinite.set_param(&mut encoder)?;
 
         while let Some(frame) = reader.read_next_frame()? {
+            debug!("Writing frame");
             encoder.write_frame(frame)?;
         }
     }
@@ -113,9 +127,11 @@ where
     let (width, height) = decoder.dimensions();
     let color_type = decoder.color_type();
     let total_bytes = decoder.total_bytes();
+    debug!("Reading image");
     let mut decoded_bytes = vec![0u8; total_bytes as usize];
     decoder.read_image(&mut decoded_bytes)?;
 
+    debug!("Writing image");
     encoder.write_image(&decoded_bytes, width, height, color_type)?;
 
     Ok(())

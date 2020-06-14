@@ -2,7 +2,7 @@ use crate::error::UploadError;
 use actix_web::web;
 use image::{DynamicImage, GenericImageView};
 use std::{collections::HashSet, path::PathBuf};
-use tracing::{debug, instrument};
+use tracing::{debug, instrument, Span};
 
 pub(crate) trait Processor {
     fn name() -> &'static str
@@ -51,6 +51,7 @@ impl Processor for Identity {
     where
         Self: Sized,
     {
+        debug!("Identity");
         Some(Box::new(Identity))
     }
 
@@ -95,6 +96,7 @@ impl Processor for Thumbnail {
     }
 
     fn process(&self, img: DynamicImage) -> Result<DynamicImage, UploadError> {
+        debug!("Thumbnail");
         if img.in_bounds(self.0, self.0) {
             Ok(img.thumbnail(self.0, self.0))
         } else {
@@ -129,6 +131,7 @@ impl Processor for Blur {
     }
 
     fn process(&self, img: DynamicImage) -> Result<DynamicImage, UploadError> {
+        debug!("Blur");
         Ok(img.blur(self.0))
     }
 }
@@ -148,25 +151,7 @@ pub(crate) struct ProcessChain {
 impl std::fmt::Debug for ProcessChain {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         f.debug_struct("ProcessChain")
-            .field("inner", &format!("{} operations", self.inner.len()))
-            .finish()
-    }
-}
-
-pub(crate) struct ImageWrapper {
-    pub(crate) inner: DynamicImage,
-}
-
-impl From<DynamicImage> for ImageWrapper {
-    fn from(inner: DynamicImage) -> Self {
-        ImageWrapper { inner }
-    }
-}
-
-impl std::fmt::Debug for ImageWrapper {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        f.debug_struct("ImageWrapper")
-            .field("inner", &"DynamicImage".to_string())
+            .field("steps", &self.inner.len())
             .finish()
     }
 }
@@ -199,15 +184,23 @@ pub(crate) fn build_path(base: PathBuf, chain: &ProcessChain, filename: String) 
     path
 }
 
-#[instrument]
+#[instrument(skip(img))]
 pub(crate) async fn process_image(
     chain: ProcessChain,
-    img: ImageWrapper,
-) -> Result<ImageWrapper, UploadError> {
-    let mut inner = img.inner;
+    mut img: DynamicImage,
+) -> Result<DynamicImage, UploadError> {
     for processor in chain.inner.into_iter() {
-        inner = web::block(move || processor.process(inner)).await?;
+        debug!("Step");
+        let span = Span::current();
+        img = web::block(move || {
+            let entered = span.enter();
+            let res = processor.process(img);
+            drop(entered);
+            res
+        })
+        .await?;
+        debug!("Step complete");
     }
 
-    Ok(inner.into())
+    Ok(img)
 }
