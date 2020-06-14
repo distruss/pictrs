@@ -2,6 +2,7 @@ use actix_web::dev::{Service, Transform};
 use futures::future::{ok, Ready};
 use std::task::{Context, Poll};
 use tracing_futures::{Instrument, Instrumented};
+use uuid::Uuid;
 
 pub(crate) struct Tracing;
 
@@ -41,8 +42,10 @@ where
     }
 
     fn call(&mut self, req: S::Request) -> Self::Future {
+        let uuid = Uuid::new_v4();
+
         self.inner
             .call(req)
-            .instrument(tracing::info_span!("request"))
+            .instrument(tracing::info_span!("request", ?uuid))
     }
 }

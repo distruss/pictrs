@@ -132,7 +132,7 @@ impl UploadManager {
     }
 
     /// Delete the alias, and the file & variants if no more aliases exist
-    #[instrument(skip(self))]
+    #[instrument(skip(self, alias, token))]
     pub(crate) async fn delete(&self, alias: String, token: String) -> Result<(), UploadError> {
         use sled::Transactional;
         let db = self.inner.db.clone();
@@ -439,7 +439,7 @@ impl UploadManager {
     }
 
     // check for an already-uploaded image with this hash, returning the path to the target file
-    #[instrument(skip(self))]
+    #[instrument(skip(self, hash, content_type))]
     async fn check_duplicate(
         &self,
         hash: Hash,
@@ -479,7 +479,7 @@ impl UploadManager {
     }
 
     // generate a short filename that isn't already in-use
-    #[instrument(skip(self))]
+    #[instrument(skip(self, content_type))]
     async fn next_file(&self, content_type: mime::Mime) -> Result<String, UploadError> {
         let image_dir = self.image_dir();
         use rand::distributions::{Alphanumeric, Distribution};
@@ -508,7 +508,7 @@ impl UploadManager {
         }
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip(self, hash, alias))]
     async fn add_existing_alias(&self, hash: &Hash, alias: &str) -> Result<(), UploadError> {
         self.save_alias(hash, alias).await??;
 
@@ -520,7 +520,7 @@ impl UploadManager {
     // Add an alias to an existing file
     //
     // This will help if multiple 'users' upload the same file, and one of them wants to delete it
-    #[instrument(skip(self))]
+    #[instrument(skip(self, hash, content_type))]
     async fn add_alias(
         &self,
         hash: &Hash,
@@ -536,7 +536,7 @@ impl UploadManager {
     // Add a pre-defined alias to an existin file
     //
     // DANGER: this can cause BAD BAD BAD conflicts if the same alias is used for multiple files
-    #[instrument(skip(self))]
+    #[instrument(skip(self, hash))]
     async fn store_alias(&self, hash: &Hash, alias: &str) -> Result<(), UploadError> {
         let alias = alias.to_string();
         loop {
@@ -569,7 +569,7 @@ impl UploadManager {
     }
 
     // Generate an alias to the file
-    #[instrument(skip(self))]
+    #[instrument(skip(self, hash, content_type))]
     async fn next_alias(
         &self,
         hash: &Hash,
@@ -595,7 +595,7 @@ impl UploadManager {
     }
 
     // Save an alias to the database
-    #[instrument(skip(self))]
+    #[instrument(skip(self, hash))]
     async fn save_alias(
         &self,
         hash: &Hash,

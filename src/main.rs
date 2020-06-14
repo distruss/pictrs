@@ -87,7 +87,7 @@ fn from_ext(ext: std::ffi::OsString) -> mime::Mime {
 }
 
 /// Handle responding to succesful uploads
-#[instrument(skip(manager))]
+#[instrument(skip(value, manager))]
 async fn upload(
     value: Value,
     manager: web::Data<UploadManager>,
@@ -163,7 +163,7 @@ async fn delete(
 }
 
 /// Serve files
-#[instrument(skip(manager))]
+#[instrument(skip(manager, whitelist))]
 async fn serve(
     segments: web::Path<String>,
     manager: web::Data<UploadManager>,
@@ -300,15 +300,20 @@ async fn main() -> Result<(), anyhow::Error> {
         .transform_error(|e| UploadError::from(e).into())
         .field(
             "images",
-            Field::array(Field::file(move |_, _, stream| {
+            Field::array(Field::file(move |filename, _, stream| {
                 let manager = manager2.clone();
 
                 async move {
-                    manager.upload(stream).await.map(|alias| {
+                    let span = tracing::info_span!("file-upload", ?filename);
+                    let entered = span.enter();
+
+                    let res = manager.upload(stream).await.map(|alias| {
                         let mut path = PathBuf::new();
                         path.push(alias);
                         Some(path)
-                    })
+                    });
+                    drop(entered);
+                    res
                 }
             })),
         );
@@ -328,14 +333,19 @@ async fn main() -> Result<(), anyhow::Error> {
                 let manager = manager2.clone();
 
                 async move {
-                    manager
+                    let span = tracing::info_span!("file-import", ?filename);
+                    let entered = span.enter();
+
+                    let res = manager
                         .import(filename, content_type, validate_imports, stream)
                         .await
                         .map(|alias| {
                             let mut path = PathBuf::new();
                             path.push(alias);
                             Some(path)
-                        })
+                        });
+                    drop(entered);
+                    res
                 }
             })),
         );

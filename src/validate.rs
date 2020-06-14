@@ -15,7 +15,7 @@ pub(crate) enum GifError {
 }
 
 // import & export image using the image crate
-#[instrument(skip(bytes))]
+#[instrument(skip(bytes, prescribed_format))]
 pub(crate) async fn validate_image(
     bytes: Bytes,
     prescribed_format: Option<Format>,
