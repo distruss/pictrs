@@ -22,13 +22,7 @@ function build_image() {
     tag=$1
     arch=$2
 
-    docker build \
-        --pull \
-        --build-arg TAG=$tag \
-        -t asonix/pictrs:$arch-$tag \
-        -t asonix/pictrs:$arch-latest \
-        -f Dockerfile.$arch \
-        .
+    ./build-image.sh asonix/pictrs $tag $arch
 
     docker push asonix/pictrs:$arch-$tag
     docker push asonix/pictrs:$arch-latest

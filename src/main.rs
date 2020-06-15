@@ -9,7 +9,7 @@ use actix_web::{
 use futures::stream::{Stream, TryStreamExt};
 use image::{ImageFormat, ImageOutputFormat};
 use once_cell::sync::Lazy;
-use std::{collections::HashSet, path::PathBuf};
+use std::{collections::HashSet, path::PathBuf, sync::Once};
 use structopt::StructOpt;
 use tracing::{debug, error, info, instrument, Span};
 use tracing_subscriber::EnvFilter;
@@ -29,6 +29,7 @@ const MEGABYTES: usize = 1024 * 1024;
 const HOURS: u32 = 60 * 60;
 
 static CONFIG: Lazy<Config> = Lazy::new(|| Config::from_args());
+static MAGICK_INIT: Once = Once::new();
 
 // Try writing to a file
 #[instrument(skip(bytes))]
@@ -298,6 +299,10 @@ struct UrlQuery {
 
 #[actix_rt::main]
 async fn main() -> Result<(), anyhow::Error> {
+    MAGICK_INIT.call_once(|| {
+        magick_rust::magick_wand_genesis();
+    });
+
     if std::env::var("RUST_LOG").is_err() {
         std::env::set_var("RUST_LOG", "info");
     }

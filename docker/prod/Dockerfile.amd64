@@ -4,8 +4,10 @@ ARG UID=991
 ARG GID=991
 
 ENV TOOLCHAIN=stable
-ENV TARGET=x86_64-unknown-linux-gnu
+ENV HOST=x86_64-unknown-linux
+ENV TARGET=$HOST-gnu
 ENV TOOL=x86_64-linux-gnu
+ENV ARCH=amd64
 
 RUN \
  apt-get update && \
@@ -40,19 +42,72 @@ FROM x86_64-builder as builder
 
 USER root
 
+ADD https://imagemagick.org/download/ImageMagick.tar.gz ./
+
 RUN \
- dpkg --add-architecture amd64 && \
+ dpkg --add-architecture $ARCH && \
  apt-get update && \
- apt-get -y install libgexiv2-dev:amd64
+ apt-get -y install \
+    libgexiv2-dev:$ARCH \
+    libltdl-dev:$ARCH \
+    libjpeg-dev:$ARCH \
+    libpng-dev:$ARCH \
+    libwebp-dev:$ARCH \
+    libxml2-dev:$ARCH \
+    liblzma-dev:$ARCH && \
+ chown build:build ImageMagick.tar.gz
+
+
+USER build
+ENV USER=build
+
+ENV PKG_CONFIG_ALLOW_CROSS=1
+ENV PKG_CONFIG_PATH=/usr/lib/$TOOL/pkgconfig:/usr/lib/$PKGCONFIG
+ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib/$TOOL
+ENV LD_RUN_PATH=$LD_RUN_PATH:/usr/lib/$TOOL:/usr/lib
+ENV LDFLAGS="$LDFLAGS -L/usr/lib/$TOOL -Wl,-rpath-link,/usr/lib/$TOOL"
+ENV CPPFLAGS="$CPPFLAGS -I/usr/include -I/usr/include/$TOOL"
+
+RUN \
+ tar xzf ImageMagick.tar.gz && \
+ mv ImageMagick-* ImageMagick
+
+WORKDIR /opt/build/ImageMagick
+
+RUN \
+ ./configure \
+     CC=$TOOL-gcc \
+     CXX=$TOOL-g++ \
+     --prefix=/imagemagick \
+     --disable-docs \
+     --with-modules \
+     --enable-shared \
+     --disable-static \
+     --without-perl \
+     --with-xml=yes \
+     --with-png=yes \
+     --with-jpeg=yes \
+     --with-webp=yes \
+     --host=$HOST && \
+ make
+
+USER root
+
+RUN \
+ make install && \
+ ldconfig /imagemagick/lib
+
+ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/imagemagick/lib
+ENV LD_RUN_PATH=$LD_RUN_PATH:/imagemagick/lib
+ENV LDFLAGS="$LDFLAGS -L/imagemagick/lib"
+ENV RUSTFLAGS="-L/usr/lib/$TOOL -C link-arg=-Wl,-rpath-link,/usr/lib/$TOOL"
+ENV IMAGE_MAGICK_DIR=/imagemagick
 
 USER build
 
 ARG TAG=master
 ARG REPOSITORY=https://git.asonix.dog/asonix/pict-rs
 ARG BINARY=pict-rs
-
-ENV PKG_CONFIG_ALLOW_CROSS=1
-ENV PKG_CONFIG_PATH=/usr/lib/$TOOL/pkgconfig:/usr/lib/$PKGCONFIG
 
 RUN \
  git clone -b $TAG $REPOSITORY repo

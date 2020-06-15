@@ -4,8 +4,10 @@ ARG UID=991
 ARG GID=991
 
 ENV TOOLCHAIN=stable
-ENV TARGET=arm-unknown-linux-gnueabihf
+ENV HOST=arm-unknown-linux
+ENV TARGET=$HOST-gnueabihf
 ENV TOOL=arm-linux-gnueabihf
+ENV ARCH=armhf
 
 RUN \
  apt-get update && \
@@ -40,19 +42,76 @@ FROM arm32v7-builder as builder
 
 USER root
 
+ADD https://imagemagick.org/download/ImageMagick.tar.gz ./
+
 RUN \
- dpkg --add-architecture armhf && \
+ dpkg --add-architecture $ARCH && \
  apt-get update && \
- apt-get -y install libgexiv2-dev:armhf
+ apt-get -y install \
+    libgexiv2-dev:$ARCH \
+    libltdl-dev:$ARCH \
+    libjpeg-dev:$ARCH \
+    libpng-dev:$ARCH \
+    libwebp-dev:$ARCH \
+    libxml2-dev:$ARCH \
+    liblzma-dev:$ARCH \
+    libexpat1-dev:$ARCH && \
+ ln -s /usr/lib/$TOOL/libpcre.so /usr/lib/$TOOL/libpcre.so.3 && \
+ ln -s /usr/lib/$TOOL/libz.so /usr/lib/$TOOL/libz.so.1 && \
+ ln -s /usr/lib/$TOOL/libexpatw.so /usr/lib/$TOOL/libexpat.so.1 && \
+ chown build:build ImageMagick.tar.gz
+
+
+USER build
+ENV USER=build
+
+ENV PKG_CONFIG_ALLOW_CROSS=1
+ENV PKG_CONFIG_PATH=/usr/lib/$TOOL/pkgconfig:/usr/lib/$PKGCONFIG
+ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib/$TOOL
+ENV LD_RUN_PATH=$LD_RUN_PATH:/usr/lib/$TOOL:/usr/lib
+ENV LDFLAGS="$LDFLAGS -L/usr/lib/$TOOL -Wl,-rpath-link,/usr/lib/$TOOL"
+ENV CPPFLAGS="$CPPFLAGS -I/usr/include -I/usr/include/$TOOL"
+
+RUN \
+ tar xzf ImageMagick.tar.gz && \
+ mv ImageMagick-* ImageMagick
+
+WORKDIR /opt/build/ImageMagick
+
+RUN \
+ ./configure \
+     CC=$TOOL-gcc \
+     CXX=$TOOL-g++ \
+     --prefix=/imagemagick \
+     --disable-docs \
+     --with-modules \
+     --enable-shared \
+     --disable-static \
+     --without-perl \
+     --with-xml=yes \
+     --with-png=yes \
+     --with-jpeg=yes \
+     --with-webp=yes \
+     --host=$HOST && \
+ make
+
+USER root
+
+RUN \
+ make install && \
+ ldconfig /imagemagick/lib
+
+ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/imagemagick/lib
+ENV LD_RUN_PATH=$LD_RUN_PATH:/imagemagick/lib
+ENV LDFLAGS="$LDFLAGS -L/imagemagick/lib"
+ENV RUSTFLAGS="-L/usr/lib/$TOOL -C link-arg=-Wl,-rpath-link,/usr/lib/$TOOL"
+ENV IMAGE_MAGICK_DIR=/imagemagick
 
 USER build
 
 ARG TAG=master
 ARG REPOSITORY=https://git.asonix.dog/asonix/pict-rs
 ARG BINARY=pict-rs
-
-ENV PKG_CONFIG_ALLOW_CROSS=1
-ENV PKG_CONFIG_PATH=/usr/lib/$TOOL/pkgconfig:/usr/lib/$PKGCONFIG
 
 RUN \
  git clone -b $TAG $REPOSITORY repo
