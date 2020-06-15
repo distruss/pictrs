@@ -668,7 +668,8 @@ async fn safe_move_file(from: PathBuf, to: PathBuf) -> Result<(), UploadError> {
     }
 
     debug!("Moving {:?} to {:?}", from, to);
-    actix_fs::rename(from, to).await?;
+    actix_fs::copy(from.clone(), to).await?;
+    actix_fs::remove_file(from).await?;
     Ok(())
 }
 
