@@ -921,6 +921,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gexiv2-sys"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edc8f7e79962171a99792ff6895fac7abe89380c02f9abf9dc73c88f2e56697c"
+dependencies = [
+ "libc",
+ "pkg-config",
+]
+
+[[package]]
 name = "gif"
 version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1378,6 +1388,7 @@ dependencies = [
  "mime",
  "once_cell",
  "rand",
+ "rexiv2",
  "serde",
  "serde_json",
  "sha2",
@@ -1421,6 +1432,12 @@ name = "pin-utils"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
+
+[[package]]
+name = "pkg-config"
+version = "0.3.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05da548ad6865900e60eaba7f589cc0783590a92e940c26953ff81ddbab2d677"
 
 [[package]]
 name = "png"
@@ -1609,6 +1626,17 @@ checksum = "11834e137f3b14e309437a8276714eed3a80d1ef894869e510f2c0c0b98b9f4a"
 dependencies = [
  "hostname",
  "quick-error",
+]
+
+[[package]]
+name = "rexiv2"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "982534bb5ab05ec02973487cb3338392dc68fdc8e189fdcf268ef8c95a78cfa8"
+dependencies = [
+ "gexiv2-sys",
+ "libc",
+ "num-rational",
 ]
 
 [[package]]

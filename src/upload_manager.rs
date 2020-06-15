@@ -1,6 +1,6 @@
-use crate::{config::Format, error::UploadError, safe_save_file, to_ext, validate::validate_image};
+use crate::{config::Format, error::UploadError, to_ext, validate::validate_image};
 use actix_web::web;
-use futures::stream::{Stream, StreamExt};
+use futures::stream::{Stream, StreamExt, TryStreamExt};
 use sha2::Digest;
 use std::{path::PathBuf, pin::Pin, sync::Arc};
 use tracing::{debug, error, info, instrument, warn, Span};
@@ -272,29 +272,32 @@ impl UploadManager {
     ) -> Result<String, UploadError>
     where
         UploadError: From<E>,
+        E: Unpin,
     {
+        // -- READ IN BYTES FROM CLIENT --
         debug!("Reading stream");
-        let bytes = read_stream(stream).await?;
+        let tmpfile = tmp_file();
+        safe_save_stream(tmpfile.clone(), stream).await?;
 
-        let (bytes, content_type) = if validate {
+        let content_type = if validate {
             debug!("Validating image");
             let format = self.inner.format.clone();
-            validate_image(bytes, format).await?
+            validate_image(tmpfile.clone(), format).await?
         } else {
-            (bytes, content_type)
+            content_type
         };
 
         // -- DUPLICATE CHECKS --
 
         // Cloning bytes is fine because it's actually a pointer
         debug!("Hashing bytes");
-        let hash = self.hash(bytes.clone()).await?;
+        let hash = self.hash(tmpfile.clone()).await?;
 
         debug!("Storing alias");
         self.add_existing_alias(&hash, &alias).await?;
 
         debug!("Saving file");
-        self.save_upload(bytes, hash, content_type).await?;
+        self.save_upload(tmpfile, hash, content_type).await?;
 
         // Return alias to file
         Ok(alias)
@@ -305,27 +308,29 @@ impl UploadManager {
     pub(crate) async fn upload<E>(&self, stream: UploadStream<E>) -> Result<String, UploadError>
     where
         UploadError: From<E>,
+        E: Unpin,
     {
         // -- READ IN BYTES FROM CLIENT --
         debug!("Reading stream");
-        let bytes = read_stream(stream).await?;
+        let tmpfile = tmp_file();
+        safe_save_stream(tmpfile.clone(), stream).await?;
 
         // -- VALIDATE IMAGE --
         debug!("Validating image");
         let format = self.inner.format.clone();
-        let (bytes, content_type) = validate_image(bytes, format).await?;
+        let content_type = validate_image(tmpfile.clone(), format).await?;
 
         // -- DUPLICATE CHECKS --
 
         // Cloning bytes is fine because it's actually a pointer
         debug!("Hashing bytes");
-        let hash = self.hash(bytes.clone()).await?;
+        let hash = self.hash(tmpfile.clone()).await?;
 
         debug!("Adding alias");
         let alias = self.add_alias(&hash, content_type.clone()).await?;
 
         debug!("Saving file");
-        self.save_upload(bytes, hash, content_type).await?;
+        self.save_upload(tmpfile, hash, content_type).await?;
 
         // Return alias to file
         Ok(alias)
@@ -405,7 +410,7 @@ impl UploadManager {
     // check duplicates & store image if new
     async fn save_upload(
         &self,
-        bytes: bytes::Bytes,
+        tmpfile: PathBuf,
         hash: Hash,
         content_type: mime::Mime,
     ) -> Result<(), UploadError> {
@@ -421,19 +426,29 @@ impl UploadManager {
         let mut real_path = self.image_dir();
         real_path.push(name);
 
-        safe_save_file(real_path, bytes).await?;
+        safe_move_file(tmpfile, real_path).await?;
 
         Ok(())
     }
 
     // produce a sh256sum of the uploaded file
-    async fn hash(&self, bytes: bytes::Bytes) -> Result<Hash, UploadError> {
+    async fn hash(&self, tmpfile: PathBuf) -> Result<Hash, UploadError> {
         let mut hasher = self.inner.hasher.clone();
-        let hash = web::block(move || {
-            hasher.update(&bytes);
-            Ok(hasher.finalize_reset().to_vec()) as Result<_, UploadError>
-        })
-        .await?;
+
+        let mut stream = actix_fs::read_to_stream(tmpfile).await?;
+
+        while let Some(res) = stream.next().await {
+            let bytes = res?;
+            hasher = web::block(move || {
+                hasher.update(&bytes);
+                Ok(hasher) as Result<_, UploadError>
+            })
+            .await?;
+        }
+
+        let hash =
+            web::block(move || Ok(hasher.finalize_reset().to_vec()) as Result<_, UploadError>)
+                .await?;
 
         Ok(Hash::new(hash))
     }
@@ -620,20 +635,68 @@ impl UploadManager {
     }
 }
 
-#[instrument(skip(stream))]
-async fn read_stream<E>(mut stream: UploadStream<E>) -> Result<bytes::Bytes, UploadError>
-where
-    UploadError: From<E>,
-{
-    let mut bytes = bytes::BytesMut::new();
+pub(crate) fn tmp_file() -> PathBuf {
+    use rand::distributions::{Alphanumeric, Distribution};
+    let limit: usize = 10;
+    let rng = rand::thread_rng();
 
-    while let Some(res) = stream.next().await {
-        let new = res?;
-        debug!("Extending with {} bytes", new.len());
-        bytes.extend(new);
+    let s: String = Alphanumeric.sample_iter(rng).take(limit).collect();
+
+    let name = format!("{}.tmp", s);
+
+    let mut path = std::env::temp_dir();
+    path.push("pict-rs");
+    path.push(&name);
+
+    path
+}
+
+#[instrument]
+async fn safe_move_file(from: PathBuf, to: PathBuf) -> Result<(), UploadError> {
+    if let Some(path) = to.parent() {
+        debug!("Creating directory {:?}", path);
+        actix_fs::create_dir_all(path.to_owned()).await?;
     }
 
-    Ok(bytes.freeze())
+    debug!("Checking if {:?} already exists", to);
+    if let Err(e) = actix_fs::metadata(to.clone()).await {
+        if e.kind() != Some(std::io::ErrorKind::NotFound) {
+            return Err(e.into());
+        }
+    } else {
+        return Err(UploadError::FileExists);
+    }
+
+    debug!("Moving {:?} to {:?}", from, to);
+    actix_fs::rename(from, to).await?;
+    Ok(())
+}
+
+#[instrument(skip(stream))]
+async fn safe_save_stream<E>(to: PathBuf, stream: UploadStream<E>) -> Result<(), UploadError>
+where
+    UploadError: From<E>,
+    E: Unpin,
+{
+    if let Some(path) = to.parent() {
+        debug!("Creating directory {:?}", path);
+        actix_fs::create_dir_all(path.to_owned()).await?;
+    }
+
+    debug!("Checking if {:?} alreayd exists", to);
+    if let Err(e) = actix_fs::metadata(to.clone()).await {
+        if e.kind() != Some(std::io::ErrorKind::NotFound) {
+            return Err(e.into());
+        }
+    } else {
+        return Err(UploadError::FileExists);
+    }
+
+    debug!("Writing stream to {:?}", to);
+    let stream = stream.err_into::<UploadError>();
+    actix_fs::write_stream(to, stream).await?;
+
+    Ok(())
 }
 
 async fn remove_path(path: sled::IVec) -> Result<(), UploadError> {

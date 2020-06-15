@@ -39,9 +39,6 @@ pub(crate) enum UploadError {
     #[error("Provided token did not match expected token")]
     InvalidToken,
 
-    #[error("Uploaded content could not be validated as an image")]
-    InvalidImage(image::error::ImageError),
-
     #[error("Unsupported image format")]
     UnsupportedFormat,
 
@@ -65,6 +62,12 @@ pub(crate) enum UploadError {
 
     #[error("Error validating Gif file, {0}")]
     Gif(#[from] GifError),
+
+    #[error("Tried to create file, but file already exists")]
+    FileExists,
+
+    #[error("File metadata could not be parsed, {0}")]
+    Validate(#[from] rexiv2::Rexiv2Error),
 }
 
 impl From<actix_web::client::SendRequestError> for UploadError {

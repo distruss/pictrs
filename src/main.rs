@@ -7,6 +7,7 @@ use actix_web::{
     web, App, HttpResponse, HttpServer,
 };
 use futures::stream::{Stream, TryStreamExt};
+use image::{ImageFormat, ImageOutputFormat};
 use once_cell::sync::Lazy;
 use std::{collections::HashSet, path::PathBuf};
 use structopt::StructOpt;
@@ -150,6 +151,7 @@ async fn download(
     })))
 }
 
+/// Delete aliases and files
 #[instrument(skip(manager))]
 async fn delete(
     manager: web::Data<UploadManager>,
@@ -160,6 +162,16 @@ async fn delete(
     manager.delete(token, alias).await?;
 
     Ok(HttpResponse::NoContent().finish())
+}
+
+fn convert_format(format: ImageFormat) -> Result<ImageOutputFormat, UploadError> {
+    match format {
+        ImageFormat::Jpeg => Ok(ImageOutputFormat::Jpeg(100)),
+        ImageFormat::Png => Ok(ImageOutputFormat::Png),
+        ImageFormat::Gif => Ok(ImageOutputFormat::Gif),
+        ImageFormat::Bmp => Ok(ImageOutputFormat::Bmp),
+        _ => Err(UploadError::UnsupportedFormat),
+    }
 }
 
 /// Serve files
@@ -220,8 +232,8 @@ async fn serve(
         debug!("Exporting image");
         let img_bytes: bytes::Bytes = web::block(move || {
             let mut bytes = std::io::Cursor::new(vec![]);
-            img.write_to(&mut bytes, format)?;
-            Ok(bytes::Bytes::from(bytes.into_inner())) as Result<_, image::error::ImageError>
+            img.write_to(&mut bytes, convert_format(format)?)?;
+            Ok(bytes::Bytes::from(bytes.into_inner())) as Result<_, UploadError>
         })
         .await?;
 

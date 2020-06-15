@@ -90,22 +90,6 @@ pub(crate) enum Format {
     Png,
 }
 
-impl Format {
-    pub(crate) fn to_image_format(&self) -> image::ImageFormat {
-        match self {
-            Format::Jpeg => image::ImageFormat::Jpeg,
-            Format::Png => image::ImageFormat::Png,
-        }
-    }
-
-    pub(crate) fn to_mime(&self) -> mime::Mime {
-        match self {
-            Format::Jpeg => mime::IMAGE_JPEG,
-            Format::Png => mime::IMAGE_PNG,
-        }
-    }
-}
-
 impl std::str::FromStr for Format {
     type Err = FormatError;
 
