@@ -226,7 +226,13 @@ async fn serve(
         };
 
         debug!("Processing image");
-        let img = self::processor::process_image(chain, img).await?;
+        let (img, changed) = self::processor::process_image(chain, img).await?;
+
+        if !changed {
+            let stream = actix_fs::read_to_stream(original_path).await?;
+
+            return Ok(srv_response(stream, ext));
+        }
 
         // perform thumbnail operation in a blocking thread
         debug!("Exporting image");

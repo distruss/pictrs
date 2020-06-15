@@ -18,7 +18,7 @@ pub(crate) trait Processor {
         Self: Sized;
 
     fn path(&self, path: PathBuf) -> PathBuf;
-    fn process(&self, img: DynamicImage) -> Result<DynamicImage, UploadError>;
+    fn process(&self, img: DynamicImage) -> Result<(DynamicImage, bool), UploadError>;
 
     fn is_whitelisted(whitelist: Option<&HashSet<String>>) -> bool
     where
@@ -59,8 +59,8 @@ impl Processor for Identity {
         path
     }
 
-    fn process(&self, img: DynamicImage) -> Result<DynamicImage, UploadError> {
-        Ok(img)
+    fn process(&self, img: DynamicImage) -> Result<(DynamicImage, bool), UploadError> {
+        Ok((img, false))
     }
 }
 
@@ -95,12 +95,12 @@ impl Processor for Thumbnail {
         path
     }
 
-    fn process(&self, img: DynamicImage) -> Result<DynamicImage, UploadError> {
+    fn process(&self, img: DynamicImage) -> Result<(DynamicImage, bool), UploadError> {
         debug!("Thumbnail");
-        if img.in_bounds(self.0, self.0) {
-            Ok(img.thumbnail(self.0, self.0))
+        if img.width() > self.0 || img.height() > self.0 {
+            Ok((img.thumbnail(self.0, self.0), true))
         } else {
-            Ok(img)
+            Ok((img, false))
         }
     }
 }
@@ -130,9 +130,13 @@ impl Processor for Blur {
         path
     }
 
-    fn process(&self, img: DynamicImage) -> Result<DynamicImage, UploadError> {
+    fn process(&self, img: DynamicImage) -> Result<(DynamicImage, bool), UploadError> {
         debug!("Blur");
-        Ok(img.blur(self.0))
+        if self.0 > 0.0 {
+            Ok((img.blur(self.0), true))
+        } else {
+            Ok((img, false))
+        }
     }
 }
 
@@ -188,11 +192,13 @@ pub(crate) fn build_path(base: PathBuf, chain: &ProcessChain, filename: String) 
 pub(crate) async fn process_image(
     chain: ProcessChain,
     mut img: DynamicImage,
-) -> Result<DynamicImage, UploadError> {
+) -> Result<(DynamicImage, bool), UploadError> {
+    let mut changed = false;
+
     for processor in chain.inner.into_iter() {
         debug!("Step");
         let span = Span::current();
-        img = web::block(move || {
+        let tup = web::block(move || {
             let entered = span.enter();
             let res = processor.process(img);
             drop(entered);
@@ -200,7 +206,10 @@ pub(crate) async fn process_image(
         })
         .await?;
         debug!("Step complete");
+
+        img = tup.0;
+        changed |= tup.1;
     }
 
-    Ok(img)
+    Ok((img, changed))
 }
