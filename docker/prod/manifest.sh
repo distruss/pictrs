@@ -25,14 +25,14 @@ set -xe
 
 docker manifest create asonix/pictrs:$new_tag \
     -a asonix/pictrs:arm64v8-$new_tag \
-    -a asonix/pictrs:arm32v7-$new_tag \
     -a asonix/pictrs:amd64-$new_tag
+#     -a asonix/pictrs:arm32v7-$new_tag \
 
 docker manifest annotate asonix/pictrs:$new_tag \
     asonix/pictrs:arm64v8-$new_tag --os linux --arch arm64 --variant v8
 
-docker manifest annotate asonix/pictrs:$new_tag \
-    asonix/pictrs:arm32v7-$new_tag --os linux --arch arm --variant v7
+# docker manifest annotate asonix/pictrs:$new_tag \
+#     asonix/pictrs:arm32v7-$new_tag --os linux --arch arm --variant v7
 
 docker manifest annotate asonix/pictrs:$new_tag \
     asonix/pictrs:amd64-$new_tag --os linux --arch amd64
