@@ -57,7 +57,7 @@ Run the following to develop in docker:
 ```
 git clone https://git.asonix.dog/asonix/pict-rs
 cd pict-rs/docker/dev
-docker-compose up --build
+./dev.sh
 ```
 
 ### API
