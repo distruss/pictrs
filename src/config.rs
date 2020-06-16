@@ -91,6 +91,24 @@ pub(crate) enum Format {
     Webp,
 }
 
+impl Format {
+    pub(crate) fn to_mime(&self) -> mime::Mime {
+        match self {
+            Format::Jpeg => mime::IMAGE_JPEG,
+            Format::Png => mime::IMAGE_PNG,
+            Format::Webp => "image/webp".parse().unwrap(),
+        }
+    }
+
+    pub(crate) fn to_magick_format(&self) -> &'static str {
+        match self {
+            Format::Jpeg => "JPEG",
+            Format::Png => "PNG",
+            Format::Webp => "WEBP",
+        }
+    }
+}
+
 impl std::str::FromStr for Format {
     type Err = FormatError;
 

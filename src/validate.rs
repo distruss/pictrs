@@ -14,6 +14,10 @@ pub(crate) trait Op {
     fn op<F, T>(&self, f: F) -> Result<T, UploadError>
     where
         F: Fn(&Self) -> Result<T, &'static str>;
+
+    fn op_mut<F, T>(&mut self, f: F) -> Result<T, UploadError>
+    where
+        F: Fn(&mut Self) -> Result<T, &'static str>;
 }
 
 impl Op for MagickWand {
@@ -26,8 +30,27 @@ impl Op for MagickWand {
             Err(e) => {
                 if let Ok(e) = self.get_exception() {
                     error!("WandError: {}", e.0);
+                    Err(UploadError::Wand(e.0.to_owned()))
+                } else {
+                    Err(UploadError::Wand(e.to_owned()))
                 }
-                Err(UploadError::Wand(e.to_owned()))
+            }
+        }
+    }
+
+    fn op_mut<F, T>(&mut self, f: F) -> Result<T, UploadError>
+    where
+        F: Fn(&mut Self) -> Result<T, &'static str>,
+    {
+        match f(self) {
+            Ok(t) => Ok(t),
+            Err(e) => {
+                if let Ok(e) = self.get_exception() {
+                    error!("WandError: {}", e.0);
+                    Err(UploadError::Wand(e.0.to_owned()))
+                } else {
+                    Err(UploadError::Wand(e.to_owned()))
+                }
             }
         }
     }
@@ -80,7 +103,6 @@ pub(crate) async fn validate_image(
                     debug!("format: {}", wand.op(|w| w.get_format())?);
                 }
 
-                let meta = Metadata::new_from_path(&tmpfile)?;
                 meta.clear();
                 meta.save_to_file(&tmpfile)?;
 
@@ -95,7 +117,6 @@ pub(crate) async fn validate_image(
                     debug!("format: {}", wand.op(|w| w.get_format())?);
                 }
 
-                let meta = Metadata::new_from_path(&tmpfile)?;
                 meta.clear();
                 meta.save_to_file(&tmpfile)?;
 
@@ -104,33 +125,50 @@ pub(crate) async fn validate_image(
             (Some(Format::Webp), MediaType::Other(webp)) | (None, MediaType::Other(webp))
                 if webp == "image/webp" =>
             {
+                let newfile = tmp_file();
+                let newfile_str = ptos(&newfile)?;
+                // clean metadata by writing new webp, since exiv2 doesn't support webp yet
                 {
                     let wand = MagickWand::new();
+
                     debug!("reading: {}", tmpfile_str);
                     wand.op(|w| w.read_image(&tmpfile_str))?;
 
                     debug!("format: {}", wand.op(|w| w.get_format())?);
+                    debug!("image_format: {}", wand.op(|w| w.get_image_format())?);
                     debug!("type: {}", wand.op(|w| Ok(w.get_type()))?);
                     debug!("image_type: {}", wand.op(|w| Ok(w.get_image_type()))?);
+
+                    wand.op(|w| w.write_image(&newfile_str))?;
                 }
 
-                // let meta = Metadata::new_from_path(&tmpfile)?;
-                // meta.clear();
-                // meta.save_to_file(&tmpfile)?;
+                std::fs::rename(&newfile, &tmpfile)?;
 
                 image_webp()
             }
-            (Some(Format::Jpeg), _) => {
+            (Some(format), _) => {
                 let newfile = tmp_file();
-                convert(&tmpfile, &newfile, ImageFormat::Jpeg)?;
+                let newfile_str = ptos(&newfile)?;
+                {
+                    let mut wand = MagickWand::new();
 
-                mime::IMAGE_JPEG
-            }
-            (Some(Format::Png), _) => {
-                let newfile = tmp_file();
-                convert(&tmpfile, &newfile, ImageFormat::Png)?;
+                    debug!("reading: {}", tmpfile_str);
+                    wand.op(|w| w.read_image(&tmpfile_str))?;
 
-                mime::IMAGE_PNG
+                    debug!("format: {}", wand.op(|w| w.get_format())?);
+                    debug!("image_format: {}", wand.op(|w| w.get_image_format())?);
+                    debug!("type: {}", wand.op(|w| Ok(w.get_type()))?);
+                    debug!("image_type: {}", wand.op(|w| Ok(w.get_image_type()))?);
+
+                    wand.op_mut(|w| w.set_image_format(format.to_magick_format()))?;
+
+                    debug!("writing: {}", newfile_str);
+                    wand.op(|w| w.write_image(&newfile_str))?;
+                }
+
+                std::fs::rename(&newfile, &tmpfile)?;
+
+                format.to_mime()
             }
             (_, media_type) => {
                 warn!("Unsupported media type, {}", media_type);
