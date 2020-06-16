@@ -1,17 +1,14 @@
 FROM rustembedded/cross:x86_64-unknown-linux-gnu AS x86_64-builder
 
-ARG UID=1000
-ARG GID=1000
-
 RUN \
  apt-get update && \
  apt-get upgrade -y && \
- addgroup --gid "${GID}" build && \
+ addgroup --gid 991 build && \
  adduser \
     --disabled-password \
     --gecos "" \
     --ingroup build \
-    --uid "${UID}" \
+    --uid 991 \
     --home /opt/build \
     build
 
@@ -130,7 +127,7 @@ ENV \
 RUN \
  mkdir -p ./src && \
  echo 'fn main() { println!("Dummy") }' > ./src/main.rs && \
- cargo build && \
+ cargo build --release && \
  rm -rf ./src
 
 COPY src ./src/
@@ -138,11 +135,11 @@ COPY src ./src/
 USER root
 RUN \
  chown -R build:build ./src && \
- rm -r ./target/debug/deps/pict_rs-*
+ rm -r ./target/release/deps/pict_rs-*
 
 USER build
 
-RUN cargo build --frozen
+RUN cargo build --release --frozen
 
 FROM ubuntu:20.04
 
@@ -169,7 +166,7 @@ RUN \
     pictrs
 
 COPY --from=builder /imagemagick /imagemagick
-COPY --from=builder /opt/build/repo/target/debug/$BINARY /usr/bin/$BINARY
+COPY --from=builder /opt/build/repo/target/release/$BINARY /usr/bin/$BINARY
 
 VOLUME /mnt
 WORKDIR /opt/pictrs

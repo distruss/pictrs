@@ -1,17 +1,14 @@
 FROM rustembedded/cross:arm-unknown-linux-gnueabihf AS arm32v7-builder
 
-ARG UID=991
-ARG GID=991
-
 RUN \
  apt-get update && \
  apt-get upgrade -y && \
- addgroup --gid "${GID}" build && \
+ addgroup --gid 991 build && \
  adduser \
     --disabled-password \
     --gecos "" \
     --ingroup build \
-    --uid "${UID}" \
+    --uid 991 \
     --home /opt/build \
     build
 
@@ -59,9 +56,6 @@ RUN \
     libclang-dev \
     clang \
     libexpat1-dev:$ARCH && \
- ln -s /usr/lib/$TOOL/libpcre.so /usr/lib/$TOOL/libpcre.so.3 && \
- ln -s /usr/lib/$TOOL/libz.so /usr/lib/$TOOL/libz.so.1 && \
- ln -s /usr/lib/$TOOL/libexpatw.so /usr/lib/$TOOL/libexpat.so.1 && \
  chown build:build ImageMagick.tar.gz
 
 
@@ -79,7 +73,7 @@ ENV \
  PKG_CONFIG_PATH=/usr/lib/$TOOL/pkgconfig:/usr/lib/pkgconfig \
  LD_LIBRARY_PATH=/usr/lib/$TOOL \
  LD_RUN_PATH=$LD_RUN_PATH:/usr/lib/$TOOL \
- LDFLAGS="$LDFLAGS -L/usr/lib/$TOOL -Wl,-rpath-link,/usr/lib/$TOOL" \
+ LDFLAGS="$LDFLAGS -L/lib/$TOOL -L/usr/lib/$TOOL -Wl,-rpath-link,/usr/lib/$TOOL" \
  CFLAGS="$CFLAGS -I/usr/include/$TOOL -I/usr/$TOOL/include -I/usr/include" \
  CPPFLAGS="$CPPFLAGS -I/usr/include/$TOOL -I/usr/$TOOL/include -I/usr/include"
 
@@ -124,7 +118,7 @@ ENV \
  LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/imagemagick/lib \
  LD_RUN_PATH=$LD_RUN_PATH:/imagemagick/lib \
  LDFLAGS="$LDFLAGS -L/imagemagick/lib" \
- RUSTFLAGS="-L/usr/lib/$TOOL -C link-arg=-Wl,-rpath-link,/usr/lib/$TOOL" \
+ RUSTFLAGS="-L/usr/lib/$TOOL -L/lib/$TOOL -C link-arg=-Wl,-rpath-link,/usr/lib/$TOOL -C link-arg=-Wl,-rpath-link,/lib/$TOOL" \
  IMAGE_MAGICK_LIB_DIRS=/imagemagick/lib \
  IMAGE_MAGICK_INCLUDE_DIRS=/imagemagick/include/ImageMagick-7 \
  PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/imagemagick/lib/pkgconfig \

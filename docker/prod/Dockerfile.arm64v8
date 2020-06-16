@@ -1,17 +1,14 @@
 FROM rustembedded/cross:aarch64-unknown-linux-gnu AS aarch64-builder
 
-ARG UID=991
-ARG GID=991
-
 RUN \
  apt-get update && \
  apt-get upgrade -y && \
- addgroup --gid "${GID}" build && \
+ addgroup --gid 991 build && \
  adduser \
     --disabled-password \
     --gecos "" \
     --ingroup build \
-    --uid "${UID}" \
+    --uid 991 \
     --home /opt/build \
     build
 
