@@ -23,6 +23,7 @@ mod validate;
 
 use self::{
     config::Config, error::UploadError, middleware::Tracing, upload_manager::UploadManager,
+    validate::image_webp,
 };
 
 const MEGABYTES: usize = 1024 * 1024;
@@ -75,7 +76,7 @@ fn to_ext(mime: mime::Mime) -> &'static str {
     } else if mime == mime::IMAGE_GIF {
         ".gif"
     } else {
-        ".bmp"
+        ".webp"
     }
 }
 
@@ -84,7 +85,7 @@ fn from_ext(ext: std::ffi::OsString) -> mime::Mime {
         Some("png") => mime::IMAGE_PNG,
         Some("jpg") => mime::IMAGE_JPEG,
         Some("gif") => mime::IMAGE_GIF,
-        _ => mime::IMAGE_BMP,
+        _ => image_webp(),
     }
 }
 

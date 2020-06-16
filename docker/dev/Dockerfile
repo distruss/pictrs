@@ -1,8 +1,37 @@
-FROM rustembedded/cross:x86_64-unknown-linux-gnu AS x86_64-builder
+# Target environment
+FROM amd64/ubuntu:20.04 as target-env
+
+ENV \
+ TARGET=x86_64-unknown-linux-gnu \
+ BUILD_MODE=release
+
+# Basic cross-build environment
+FROM ubuntu:20.04 as cross-build
+
+ENV \
+ ARCH=amd64 \
+ HOST=x86_64-unknown-linux \
+ TOOL=x86_64-linux-gnu \
+ TARGET=x86_64-unknown-linux-gnu \
+ CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc \
+ CC_X86_64_UNKNOWN_LINUX_GNU=x86_64-linux-gnu-gcc \
+ CXX_X86_64_UNKNOWN_LINUX_GNU=x86_64-linux-gnu-g++ \
+ BUILD_MODE=release
+
+ENV \
+ TOOLCHAIN=stable \
+ DEBIAN_FRONTEND=noninteractive \
+ PKG_CONFIG_ALLOW_CROSS=1 \
+ PKG_CONFIG_PATH=/usr/lib/$TOOL/pkgconfig:/usr/lib/pkgconfig \
+ LD_LIBRARY_PATH=/usr/lib/$TOOL:/usr/$TOOL/lib \
+ LD_RUN_PATH=/usr/lib/$TOOL:/usr/$TOOL/lib \
+ LDFLAGS="-L/usr/lib/$TOOL -L/usr/$TOOL/lib -Wl,-rpath-link,/usr/lib/$TOOL -Wl,-rpath-link,/usr/$TOOL/lib" \
+ CFLAGS="-I/usr/include/$TOOL -I/usr/$TOOL/include -I/usr/include" \
+ CPPFLAGS="-I/usr/include/$TOOL -I/usr/$TOOL/include -I/usr/include"
 
 RUN \
- apt-get update && \
- apt-get upgrade -y && \
+ sed 's/http:\/\/\(.*\).ubuntu.com\/ubuntu\//[arch-=amd64,i386] http:\/\/ports.ubuntu.com\/ubuntu-ports\//g' /etc/apt/sources.list > /etc/apt/sources.list.d/ports.list && \
+ sed -i 's/http:\/\/\(.*\).ubuntu.com\/ubuntu\//[arch=amd64,i386] http:\/\/\1.archive.ubuntu.com\/ubuntu\//g' /etc/apt/sources.list && \
  addgroup --gid 991 build && \
  adduser \
     --disabled-password \
@@ -10,167 +39,174 @@ RUN \
     --ingroup build \
     --uid 991 \
     --home /opt/build \
-    build
-
-ADD https://sh.rustup.rs /opt/build/rustup.sh
-
-RUN \
- chown -R build:build /opt/build
-
-USER build
-WORKDIR /opt/build
-
-ENV \
- PATH=$PATH:/opt/build/.cargo/bin \
- TOOLCHAIN=stable \
- HOST=x86_64-unknown-linux \
- TARGET=x86_64-unknown-linux-gnu \
- TOOL=x86_64-linux-gnu \
- ARCH=amd64
-
-RUN \
- chmod +x rustup.sh && \
- ./rustup.sh --default-toolchain $TOOLCHAIN --profile minimal -y && \
- rustup target add $TARGET
-
-FROM x86_64-builder as builder
-
-USER root
-
-ADD https://imagemagick.org/download/ImageMagick.tar.gz ./
-
-RUN \
+    build && \
  dpkg --add-architecture $ARCH && \
  apt-get update && \
- apt-get -y install \
-    libgexiv2-dev:$ARCH \
+ apt-get upgrade -y && \
+ apt-get install -y \
+    pkg-config \
+    build-essential \
+    crossbuild-essential-$ARCH
+
+WORKDIR /opt/build
+
+
+# Environment for ImageMagick
+FROM cross-build as imagemagick-builder
+
+RUN \
+ apt-get install -y \
     libltdl-dev:$ARCH \
     libjpeg-dev:$ARCH \
     libpng-dev:$ARCH \
     libwebp-dev:$ARCH \
     liblzma-dev:$ARCH \
-    llvm-dev \
-    libclang-dev \
-    clang && \
- chown build:build ImageMagick.tar.gz
+    libxml2-dev:$ARCH
 
+ADD --chown=build:build https://imagemagick.org/download/ImageMagick.tar.gz /opt/build/ImageMagick.tar.gz
 
 USER build
 
 RUN \
- tar xvzf ImageMagick.tar.gz && \
+ tar zxf ImageMagick.tar.gz && \
  mv ImageMagick-* ImageMagick
 
 WORKDIR /opt/build/ImageMagick
 
-ENV \
- USER=build \
- PKG_CONFIG_ALLOW_CROSS=1 \
- PKG_CONFIG_PATH=/usr/lib/$TOOL/pkgconfig:/usr/lib/pkgconfig \
- LD_LIBRARY_PATH=/usr/lib/$TOOL \
- LD_RUN_PATH=$LD_RUN_PATH:/usr/lib/$TOOL \
- LDFLAGS="$LDFLAGS -L/usr/lib/$TOOL -Wl,-rpath-link,/usr/lib/$TOOL" \
- CFLAGS="$CFLAGS -I/usr/include/$TOOL -I/usr/$TOOL/include -I/usr/include" \
- CPPFLAGS="$CPPFLAGS -I/usr/include/$TOOL -I/usr/$TOOL/include -I/usr/include"
-
 RUN \
  ./configure \
-     CC=$TOOL-gcc \
-     CXX=$TOOL-g++ \
-     --prefix=/imagemagick \
-     --with-modules \
-     --enable-shared \
-     --disable-static \
-     --without-perl \
-     --with-xml=yes \
-     --with-png=yes \
-     --with-jpeg=yes \
-     --with-webp=yes \
-     --host=$HOST && \
+    CC=$TOOL-gcc \
+    CXX=$TOOL-g++ \
+    --enable-shared \
+    --with-modules \
+    --disable-static \
+    --disable-docs \
+    --prefix=/usr/local \
+    --with-utilities=no \
+    --without-perl \
+    --with-xml=yes \
+    --with-png=yes \
+    --with-jpeg=yes \
+    --with-webp=yes \
+    --host=$HOST && \
  make
 
 USER root
 
 RUN \
  make install && \
- ldconfig /imagemagick/lib
+ ldconfig /usr/local/lib
 
+
+# Environment for Rust
+FROM cross-build as rust
+
+RUN \
+ apt-get install -y curl
+
+ENV \
+ PATH=$PATH:/opt/build/.cargo/bin
+
+ADD --chown=build:build https://sh.rustup.rs /opt/build/rustup.sh
+
+USER build
+
+RUN \
+ chmod +x rustup.sh && \
+ ./rustup.sh --default-toolchain $TOOLCHAIN --profile minimal -y && \
+ rustup target add $TARGET
+
+USER root
+
+
+# Environment for pict-rs
+FROM cross-build as pict-rs-builder
+
+RUN \
+ apt-get install -y \
+    libgexiv2-dev:$ARCH \
+    libxml2:$ARCH \
+    libltdl7:$ARCH \
+    llvm-dev \
+    libclang-dev \
+    clang
+
+ENV \
+ PATH=$PATH:/opt/build/.cargo/bin \
+ PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/usr/local/lib/pkgconfig \
+ LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib \
+ LD_RUN_PATH=$LD_RUN_PATH:/usr/local/lib \
+ LDFLAGS="$LDFLAGS -L/usr/local/lib" \
+ IMAGE_MAGICK_LIB_DIRS=/usr/local/lib \
+ IMAGE_MAGICK_INCLUDE_DIRS=/usr/local/include/ImageMagick-7 \
+ CFLAGS="$CFLAGS -I/usr/local/include/ImageMagick-7" \
+ CPPFLAGS="$CPPFLAGS -I/usr/local/include/ImageMagick-7" \
+ RUSTFLAGS="-L/usr/lib/$TOOL -C link-arg=-Wl,-rpath-link,/usr/lib/$TOOL -L/usr/$TOOL/lib -C link-arg=-Wl,-rpath-link,/usr/$TOOL/lib"
+
+COPY --from=rust --chown=build:build /opt/build/.cargo /opt/build/.cargo
+COPY --from=rust --chown=build:build /opt/build/.rustup /opt/build/.rustup
+COPY --from=imagemagick-builder /usr/local/ /usr/local
 
 USER build
 
 WORKDIR /opt/build
 
 RUN \
- cargo new repo
+ USER=build cargo new repo
 
 WORKDIR /opt/build/repo
 
-COPY Cargo.toml Cargo.lock ./
-
-USER root
-RUN \
- chown -R build:build ./
-
-USER build
-
-ENV \
- LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/imagemagick/lib \
- LD_RUN_PATH=$LD_RUN_PATH:/imagemagick/lib \
- LDFLAGS="$LDFLAGS -L/imagemagick/lib" \
- RUSTFLAGS="-L/usr/lib/$TOOL -C link-arg=-Wl,-rpath-link,/usr/lib/$TOOL" \
- IMAGE_MAGICK_LIB_DIRS=/imagemagick/lib \
- IMAGE_MAGICK_INCLUDE_DIRS=/imagemagick/include/ImageMagick-7 \
- PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/imagemagick/lib/pkgconfig \
- CFLAGS="$CFLAGS -I/imagemagick/include/ImageMagick-7" \
- CPPFLAGS="$CPPFLAGS -I/imagemagick/include/ImageMagick-7"
+COPY --chown=build:build Cargo.toml Cargo.lock ./
 
 RUN \
  mkdir -p ./src && \
  echo 'fn main() { println!("Dummy") }' > ./src/main.rs && \
- cargo build --release && \
- rm -rf ./src
+ USER=build cargo build --$BUILD_MODE && \
+ rm -rf ./src && \
+ rm -rf ./target/$BUILD_MODE/deps/pict_rs-*
 
-COPY src ./src/
-
-USER root
-RUN \
- chown -R build:build ./src && \
- rm -r ./target/release/deps/pict_rs-*
-
-USER build
-
-RUN cargo build --release --frozen
-
-FROM ubuntu:20.04
-
-ARG UID=1000
-ARG GID=1000
-ARG BINARY=pict-rs
-ARG TARGET=x86_64-unknown-linux-gnu
+COPY --chown=build:build src ./src/
 
 RUN \
- apt-get update && \
- apt-get -y upgrade && \
- apt-get -y install \
-    tini \
-    libgexiv2-2 \
-    libgomp1 \
-    libltdl7 && \
+ cargo build --$BUILD_MODE --frozen
+
+# Producing target binary
+FROM target-env
+
+ARG UID=991
+ARG GID=991
+
+RUN \
  addgroup --gid $GID pictrs && \
  adduser \
     --disabled-password \
     --gecos "" \
     --ingroup pictrs \
     --uid $UID \
-    --home /opt/pictrs \
-    pictrs
+    --home /opt/pict-rs \
+    pictrs && \
+ apt-get update && \
+ apt-get upgrade -y && \
+ apt-get install -y \
+    libgexiv2-2 \
+    libpng16-16 \
+    libjpeg8 \
+    libwebp6 \
+    libwebpdemux2 \
+    libwebpmux3 \
+    libltdl7 \
+    libgomp1 \
+    libxml2 \
+    tini
 
-COPY --from=builder /imagemagick /imagemagick
-COPY --from=builder /opt/build/repo/target/release/$BINARY /usr/bin/$BINARY
+COPY --from=pict-rs-builder /opt/build/repo/target/$BUILD_MODE/pict-rs /usr/local/bin/pict-rs
+COPY --from=imagemagick-builder /usr/local /usr/local
+
+ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib
 
 VOLUME /mnt
-WORKDIR /opt/pictrs
+WORKDIR /opt/pict-rs
 USER pictrs
 EXPOSE 8080
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["/usr/bin/pict-rs", "-p", "/mnt", "-a", "0.0.0.0:8080"]
+CMD ["/usr/local/bin/pict-rs", "-p", "/mnt"]

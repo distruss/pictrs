@@ -1,13 +1,37 @@
 use crate::{config::Format, error::UploadError, upload_manager::tmp_file};
 use actix_web::web;
-use image::{io::Reader, ImageDecoder, ImageEncoder, ImageFormat};
+use image::{io::Reader, ImageFormat};
+use magick_rust::MagickWand;
 use rexiv2::{MediaType, Metadata};
 use std::{
     fs::File,
     io::{BufReader, BufWriter, Write},
     path::PathBuf,
 };
-use tracing::{debug, instrument, trace, Span};
+use tracing::{debug, error, instrument, trace, warn, Span};
+
+pub(crate) trait Op {
+    fn op<F, T>(&self, f: F) -> Result<T, UploadError>
+    where
+        F: Fn(&Self) -> Result<T, &'static str>;
+}
+
+impl Op for MagickWand {
+    fn op<F, T>(&self, f: F) -> Result<T, UploadError>
+    where
+        F: Fn(&Self) -> Result<T, &'static str>,
+    {
+        match f(self) {
+            Ok(t) => Ok(t),
+            Err(e) => {
+                if let Ok(e) = self.get_exception() {
+                    error!("WandError: {}", e.0);
+                }
+                Err(UploadError::Wand(e.to_owned()))
+            }
+        }
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum GifError {
@@ -18,12 +42,21 @@ pub(crate) enum GifError {
     Io(#[from] std::io::Error),
 }
 
+pub(crate) fn image_webp() -> mime::Mime {
+    "image/webp".parse().unwrap()
+}
+
+fn ptos(p: &PathBuf) -> Result<String, UploadError> {
+    Ok(p.to_str().ok_or(UploadError::Path)?.to_owned())
+}
+
 // import & export image using the image crate
 #[instrument]
 pub(crate) async fn validate_image(
     tmpfile: PathBuf,
     prescribed_format: Option<Format>,
 ) -> Result<mime::Mime, UploadError> {
+    let tmpfile_str = ptos(&tmpfile)?;
     let span = Span::current();
 
     let content_type = web::block(move || {
@@ -39,20 +72,53 @@ pub(crate) async fn validate_image(
                 mime::IMAGE_GIF
             }
             (Some(Format::Jpeg), MediaType::Jpeg) | (None, MediaType::Jpeg) => {
-                validate(&tmpfile, ImageFormat::Jpeg)?;
+                {
+                    let wand = MagickWand::new();
+                    debug!("reading: {}", tmpfile_str);
+                    wand.op(|w| w.read_image(&tmpfile_str))?;
 
+                    debug!("format: {}", wand.op(|w| w.get_format())?);
+                }
+
+                let meta = Metadata::new_from_path(&tmpfile)?;
                 meta.clear();
                 meta.save_to_file(&tmpfile)?;
 
                 mime::IMAGE_JPEG
             }
             (Some(Format::Png), MediaType::Png) | (None, MediaType::Png) => {
-                validate(&tmpfile, ImageFormat::Png)?;
+                {
+                    let wand = MagickWand::new();
+                    debug!("reading: {}", tmpfile_str);
+                    wand.op(|w| w.read_image(&tmpfile_str))?;
 
+                    debug!("format: {}", wand.op(|w| w.get_format())?);
+                }
+
+                let meta = Metadata::new_from_path(&tmpfile)?;
                 meta.clear();
                 meta.save_to_file(&tmpfile)?;
 
                 mime::IMAGE_PNG
+            }
+            (Some(Format::Webp), MediaType::Other(webp)) | (None, MediaType::Other(webp))
+                if webp == "image/webp" =>
+            {
+                {
+                    let wand = MagickWand::new();
+                    debug!("reading: {}", tmpfile_str);
+                    wand.op(|w| w.read_image(&tmpfile_str))?;
+
+                    debug!("format: {}", wand.op(|w| w.get_format())?);
+                    debug!("type: {}", wand.op(|w| Ok(w.get_type()))?);
+                    debug!("image_type: {}", wand.op(|w| Ok(w.get_image_type()))?);
+                }
+
+                // let meta = Metadata::new_from_path(&tmpfile)?;
+                // meta.clear();
+                // meta.save_to_file(&tmpfile)?;
+
+                image_webp()
             }
             (Some(Format::Jpeg), _) => {
                 let newfile = tmp_file();
@@ -66,13 +132,10 @@ pub(crate) async fn validate_image(
 
                 mime::IMAGE_PNG
             }
-            (_, MediaType::Bmp) => {
-                let newfile = tmp_file();
-                validate_bmp(&tmpfile, &newfile)?;
-
-                mime::IMAGE_BMP
+            (_, media_type) => {
+                warn!("Unsupported media type, {}", media_type);
+                return Err(UploadError::UnsupportedFormat);
             }
-            _ => return Err(UploadError::UnsupportedFormat),
         };
 
         drop(entered);
@@ -113,20 +176,6 @@ fn validate(path: &PathBuf, format: ImageFormat) -> Result<(), UploadError> {
 }
 
 #[instrument]
-fn validate_bmp(from: &PathBuf, to: &PathBuf) -> Result<(), UploadError> {
-    debug!("Transmuting BMP");
-    let decoder = image::bmp::BmpDecoder::new(BufReader::new(File::open(from)?))?;
-
-    let mut writer = BufWriter::new(File::create(to)?);
-    let encoder = image::bmp::BMPEncoder::new(&mut writer);
-    validate_still_image(decoder, encoder)?;
-
-    writer.flush()?;
-    std::fs::rename(to, from)?;
-    Ok(())
-}
-
-#[instrument]
 fn validate_gif(from: &PathBuf, to: &PathBuf) -> Result<(), GifError> {
     debug!("Transmuting GIF");
     use gif::{Parameter, SetParameter};
@@ -155,23 +204,5 @@ fn validate_gif(from: &PathBuf, to: &PathBuf) -> Result<(), GifError> {
     writer.flush()?;
 
     std::fs::rename(to, from)?;
-    Ok(())
-}
-
-fn validate_still_image<'a, D, E>(decoder: D, encoder: E) -> Result<(), UploadError>
-where
-    D: ImageDecoder<'a>,
-    E: ImageEncoder,
-{
-    let (width, height) = decoder.dimensions();
-    let color_type = decoder.color_type();
-    let total_bytes = decoder.total_bytes();
-    debug!("Reading image");
-    let mut decoded_bytes = vec![0u8; total_bytes as usize];
-    decoder.read_image(&mut decoded_bytes)?;
-
-    debug!("Writing image");
-    encoder.write_image(&decoded_bytes, width, height, color_type)?;
-
     Ok(())
 }

@@ -68,6 +68,9 @@ pub(crate) enum UploadError {
 
     #[error("File metadata could not be parsed, {0}")]
     Validate(#[from] rexiv2::Rexiv2Error),
+
+    #[error("Error in MagickWand, {0}")]
+    Wand(String),
 }
 
 impl From<actix_web::client::SendRequestError> for UploadError {

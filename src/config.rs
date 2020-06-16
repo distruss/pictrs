@@ -30,7 +30,7 @@ pub(crate) struct Config {
         short,
         long,
         env = "PICTRS_FORMAT",
-        help = "An optional image format to convert all uploaded files into, supports 'jpg' and 'png'"
+        help = "An optional image format to convert all uploaded files into, supports 'jpg', 'png', and 'webp'"
     )]
     format: Option<Format>,
 
@@ -88,6 +88,7 @@ pub(crate) struct FormatError(String);
 pub(crate) enum Format {
     Jpeg,
     Png,
+    Webp,
 }
 
 impl std::str::FromStr for Format {
@@ -97,6 +98,7 @@ impl std::str::FromStr for Format {
         match s {
             "png" => Ok(Format::Png),
             "jpg" => Ok(Format::Jpeg),
+            "webp" => Ok(Format::Webp),
             other => Err(FormatError(other.to_string())),
         }
     }

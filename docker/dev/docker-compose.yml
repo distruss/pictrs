@@ -12,6 +12,6 @@ services:
       - "127.0.0.1:8080:8080"
     restart: always
     environment:
-      - PICTRS_PATH=/app/data
+      - RUST_LOG=info,pict_rs=debug
     volumes:
       - ./volumes/pictrs:/mnt
