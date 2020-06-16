@@ -1,6 +1,10 @@
-use crate::error::UploadError;
+use crate::{
+    error::UploadError,
+    validate::{ptos, Op},
+};
 use actix_web::web;
-use image::{DynamicImage, GenericImageView};
+use bytes::Bytes;
+use magick_rust::MagickWand;
 use std::{collections::HashSet, path::PathBuf};
 use tracing::{debug, instrument, Span};
 
@@ -18,7 +22,7 @@ pub(crate) trait Processor {
         Self: Sized;
 
     fn path(&self, path: PathBuf) -> PathBuf;
-    fn process(&self, img: DynamicImage) -> Result<(DynamicImage, bool), UploadError>;
+    fn process(&self, wand: &mut MagickWand) -> Result<bool, UploadError>;
 
     fn is_whitelisted(whitelist: Option<&HashSet<String>>) -> bool
     where
@@ -59,12 +63,12 @@ impl Processor for Identity {
         path
     }
 
-    fn process(&self, img: DynamicImage) -> Result<(DynamicImage, bool), UploadError> {
-        Ok((img, false))
+    fn process(&self, _: &mut MagickWand) -> Result<bool, UploadError> {
+        Ok(false)
     }
 }
 
-pub(crate) struct Thumbnail(u32);
+pub(crate) struct Thumbnail(usize);
 
 impl Processor for Thumbnail {
     fn name() -> &'static str
@@ -95,17 +99,23 @@ impl Processor for Thumbnail {
         path
     }
 
-    fn process(&self, img: DynamicImage) -> Result<(DynamicImage, bool), UploadError> {
+    fn process(&self, wand: &mut MagickWand) -> Result<bool, UploadError> {
         debug!("Thumbnail");
-        if img.width() > self.0 || img.height() > self.0 {
-            Ok((img.thumbnail(self.0, self.0), true))
+        let width = wand.get_image_width();
+        let height = wand.get_image_height();
+
+        if width > self.0 || height > self.0 {
+            wand.fit(self.0, self.0);
+            Ok(true)
+        } else if wand.op(|w| w.get_image_format())? == "GIF" {
+            Ok(true)
         } else {
-            Ok((img, false))
+            Ok(false)
         }
     }
 }
 
-pub(crate) struct Blur(f32);
+pub(crate) struct Blur(f64);
 
 impl Processor for Blur {
     fn name() -> &'static str
@@ -130,12 +140,13 @@ impl Processor for Blur {
         path
     }
 
-    fn process(&self, img: DynamicImage) -> Result<(DynamicImage, bool), UploadError> {
+    fn process(&self, wand: &mut MagickWand) -> Result<bool, UploadError> {
         debug!("Blur");
         if self.0 > 0.0 {
-            Ok((img.blur(self.0), true))
+            wand.op(|w| w.gaussian_blur_image(0.0, self.0))?;
+            Ok(true)
         } else {
-            Ok((img, false))
+            Ok(false)
         }
     }
 }
@@ -188,28 +199,41 @@ pub(crate) fn build_path(base: PathBuf, chain: &ProcessChain, filename: String) 
     path
 }
 
-#[instrument(skip(img))]
+#[instrument]
 pub(crate) async fn process_image(
+    original_file: PathBuf,
     chain: ProcessChain,
-    mut img: DynamicImage,
-) -> Result<(DynamicImage, bool), UploadError> {
-    let mut changed = false;
+) -> Result<Option<Bytes>, UploadError> {
+    let original_path_str = ptos(&original_file)?;
+    let span = Span::current();
 
-    for processor in chain.inner.into_iter() {
-        debug!("Step");
-        let span = Span::current();
-        let tup = web::block(move || {
-            let entered = span.enter();
-            let res = processor.process(img);
-            drop(entered);
-            res
-        })
-        .await?;
-        debug!("Step complete");
+    let opt = web::block(move || {
+        let entered = span.enter();
 
-        img = tup.0;
-        changed |= tup.1;
-    }
+        let mut wand = MagickWand::new();
+        debug!("Reading image");
+        wand.op(|w| w.read_image(&original_path_str))?;
 
-    Ok((img, changed))
+        let format = wand.op(|w| w.get_image_format())?;
+
+        debug!("Processing image");
+        let mut changed = false;
+
+        for processor in chain.inner.into_iter() {
+            debug!("Step");
+            changed |= processor.process(&mut wand)?;
+            debug!("Step complete");
+        }
+
+        if changed {
+            let vec = wand.op(|w| w.write_image_blob(&format))?;
+            return Ok(Some(Bytes::from(vec)));
+        }
+
+        drop(entered);
+        Ok(None) as Result<Option<Bytes>, UploadError>
+    })
+    .await?;
+
+    Ok(opt)
 }

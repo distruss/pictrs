@@ -7,7 +7,6 @@ use actix_web::{
     web, App, HttpResponse, HttpServer,
 };
 use futures::stream::{Stream, TryStreamExt};
-use image::{ImageFormat, ImageOutputFormat};
 use once_cell::sync::Lazy;
 use std::{collections::HashSet, path::PathBuf, sync::Once};
 use structopt::StructOpt;
@@ -22,8 +21,8 @@ mod upload_manager;
 mod validate;
 
 use self::{
-    config::Config, error::UploadError, middleware::Tracing, upload_manager::UploadManager,
-    validate::image_webp,
+    config::Config, error::UploadError, middleware::Tracing, processor::process_image,
+    upload_manager::UploadManager, validate::image_webp,
 };
 
 const MEGABYTES: usize = 1024 * 1024;
@@ -166,16 +165,6 @@ async fn delete(
     Ok(HttpResponse::NoContent().finish())
 }
 
-fn convert_format(format: ImageFormat) -> Result<ImageOutputFormat, UploadError> {
-    match format {
-        ImageFormat::Jpeg => Ok(ImageOutputFormat::Jpeg(100)),
-        ImageFormat::Png => Ok(ImageOutputFormat::Png),
-        ImageFormat::Gif => Ok(ImageOutputFormat::Gif),
-        ImageFormat::Bmp => Ok(ImageOutputFormat::Bmp),
-        _ => Err(UploadError::UnsupportedFormat),
-    }
-}
-
 /// Serve files
 #[instrument(skip(manager, whitelist))]
 async fn serve(
@@ -214,36 +203,15 @@ async fn serve(
         let mut original_path = manager.image_dir();
         original_path.push(name.clone());
 
-        // Read the image file & produce a DynamicImage
-        //
-        // Drop bytes so we don't keep it around in memory longer than we need to
-        debug!("Reading image");
-        let (img, format) = {
-            let bytes = actix_fs::read(original_path.clone()).await?;
-            let bytes2 = bytes.clone();
-            let format = web::block(move || image::guess_format(&bytes2)).await?;
-            let img = web::block(move || image::load_from_memory(&bytes)).await?;
+        // apply chain to the provided image
+        let img_bytes = match process_image(original_path.clone(), chain).await? {
+            Some(bytes) => bytes,
+            None => {
+                let stream = actix_fs::read_to_stream(original_path).await?;
 
-            (img, format)
+                return Ok(srv_response(stream, ext));
+            }
         };
-
-        debug!("Processing image");
-        let (img, changed) = self::processor::process_image(chain, img).await?;
-
-        if !changed {
-            let stream = actix_fs::read_to_stream(original_path).await?;
-
-            return Ok(srv_response(stream, ext));
-        }
-
-        // perform thumbnail operation in a blocking thread
-        debug!("Exporting image");
-        let img_bytes: bytes::Bytes = web::block(move || {
-            let mut bytes = std::io::Cursor::new(vec![]);
-            img.write_to(&mut bytes, convert_format(format)?)?;
-            Ok(bytes::Bytes::from(bytes.into_inner())) as Result<_, UploadError>
-        })
-        .await?;
 
         let path2 = path.clone();
         let img_bytes2 = img_bytes.clone();

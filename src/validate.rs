@@ -1,6 +1,5 @@
 use crate::{config::Format, error::UploadError, upload_manager::tmp_file};
 use actix_web::web;
-use image::{io::Reader, ImageFormat};
 use magick_rust::MagickWand;
 use rexiv2::{MediaType, Metadata};
 use std::{
@@ -69,8 +68,20 @@ pub(crate) fn image_webp() -> mime::Mime {
     "image/webp".parse().unwrap()
 }
 
-fn ptos(p: &PathBuf) -> Result<String, UploadError> {
+pub(crate) fn ptos(p: &PathBuf) -> Result<String, UploadError> {
     Ok(p.to_str().ok_or(UploadError::Path)?.to_owned())
+}
+
+fn validate_format(file: &str, format: &str) -> Result<(), UploadError> {
+    let wand = MagickWand::new();
+    debug!("reading");
+    wand.op(|w| w.read_image(file))?;
+
+    if wand.op(|w| w.get_image_format())? != format {
+        return Err(UploadError::UnsupportedFormat);
+    }
+
+    Ok(())
 }
 
 // import & export image using the image crate
@@ -95,13 +106,7 @@ pub(crate) async fn validate_image(
                 mime::IMAGE_GIF
             }
             (Some(Format::Jpeg), MediaType::Jpeg) | (None, MediaType::Jpeg) => {
-                {
-                    let wand = MagickWand::new();
-                    debug!("reading: {}", tmpfile_str);
-                    wand.op(|w| w.read_image(&tmpfile_str))?;
-
-                    debug!("format: {}", wand.op(|w| w.get_format())?);
-                }
+                validate_format(&tmpfile_str, "JPEG")?;
 
                 meta.clear();
                 meta.save_to_file(&tmpfile)?;
@@ -109,13 +114,7 @@ pub(crate) async fn validate_image(
                 mime::IMAGE_JPEG
             }
             (Some(Format::Png), MediaType::Png) | (None, MediaType::Png) => {
-                {
-                    let wand = MagickWand::new();
-                    debug!("reading: {}", tmpfile_str);
-                    wand.op(|w| w.read_image(&tmpfile_str))?;
-
-                    debug!("format: {}", wand.op(|w| w.get_format())?);
-                }
+                validate_format(&tmpfile_str, "PNG")?;
 
                 meta.clear();
                 meta.save_to_file(&tmpfile)?;
@@ -131,13 +130,12 @@ pub(crate) async fn validate_image(
                 {
                     let wand = MagickWand::new();
 
-                    debug!("reading: {}", tmpfile_str);
+                    debug!("reading");
                     wand.op(|w| w.read_image(&tmpfile_str))?;
 
-                    debug!("format: {}", wand.op(|w| w.get_format())?);
-                    debug!("image_format: {}", wand.op(|w| w.get_image_format())?);
-                    debug!("type: {}", wand.op(|w| Ok(w.get_type()))?);
-                    debug!("image_type: {}", wand.op(|w| Ok(w.get_image_type()))?);
+                    if wand.op(|w| w.get_image_format())? != "WEBP" {
+                        return Err(UploadError::UnsupportedFormat);
+                    }
 
                     wand.op(|w| w.write_image(&newfile_str))?;
                 }
@@ -154,11 +152,6 @@ pub(crate) async fn validate_image(
 
                     debug!("reading: {}", tmpfile_str);
                     wand.op(|w| w.read_image(&tmpfile_str))?;
-
-                    debug!("format: {}", wand.op(|w| w.get_format())?);
-                    debug!("image_format: {}", wand.op(|w| w.get_image_format())?);
-                    debug!("type: {}", wand.op(|w| Ok(w.get_type()))?);
-                    debug!("image_type: {}", wand.op(|w| Ok(w.get_image_type()))?);
 
                     wand.op_mut(|w| w.set_image_format(format.to_magick_format()))?;
 
@@ -182,35 +175,6 @@ pub(crate) async fn validate_image(
     .await?;
 
     Ok(content_type)
-}
-
-#[instrument]
-fn convert(from: &PathBuf, to: &PathBuf, format: ImageFormat) -> Result<(), UploadError> {
-    debug!("Converting");
-    let reader = Reader::new(BufReader::new(File::open(from)?)).with_guessed_format()?;
-
-    if reader.format() != Some(format) {
-        return Err(UploadError::UnsupportedFormat);
-    }
-
-    let img = reader.decode()?;
-
-    img.save_with_format(to, format)?;
-    std::fs::rename(to, from)?;
-    Ok(())
-}
-
-#[instrument]
-fn validate(path: &PathBuf, format: ImageFormat) -> Result<(), UploadError> {
-    debug!("Validating");
-    let reader = Reader::new(BufReader::new(File::open(path)?)).with_guessed_format()?;
-
-    if reader.format() != Some(format) {
-        return Err(UploadError::UnsupportedFormat);
-    }
-
-    reader.decode()?;
-    Ok(())
 }
 
 #[instrument]

@@ -15,9 +15,6 @@ pub(crate) enum UploadError {
     #[error("Error parsing string, {0}")]
     ParseString(#[from] std::string::FromUtf8Error),
 
-    #[error("Error processing image, {0}")]
-    Image(#[from] image::error::ImageError),
-
     #[error("Error interacting with filesystem, {0}")]
     Io(#[from] std::io::Error),
 
