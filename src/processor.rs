@@ -105,7 +105,16 @@ impl Processor for Thumbnail {
         let height = wand.get_image_height();
 
         if width > self.0 || height > self.0 {
-            wand.fit(self.0, self.0);
+            let width_ratio = width as f64 / self.0 as f64;
+            let height_ratio = height as f64 / self.0 as f64;
+
+            let (new_width, new_height) = if width_ratio < height_ratio {
+                (width as f64 / height_ratio, self.0 as f64)
+            } else {
+                (self.0 as f64, height as f64 / width_ratio)
+            };
+
+            wand.op(|w| w.sample_image(new_width as usize, new_height as usize))?;
             Ok(true)
         } else if wand.op(|w| w.get_image_format())? == "GIF" {
             Ok(true)
