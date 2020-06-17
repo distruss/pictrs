@@ -3,15 +3,16 @@ version: '3.3'
 services:
   pictrs:
     build: 
-      context: ../../
-      dockerfile: docker/dev/Dockerfile
+      context: .
+      dockerfile: Dockerfile
       args:
         UID: "${USER_ID:-1000}"
         GID: "${GROUP_ID:-1000}"
     ports:
-      - "127.0.0.1:8080:8080"
-    restart: always
+      - "8080:8080"
+    stdin_open: true
+    tty: true
     environment:
       - RUST_LOG=info,pict_rs=debug
     volumes:
-      - ./volumes/pictrs:/mnt
+      - ../../:/opt/build/repo

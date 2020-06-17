@@ -5,4 +5,5 @@ export GROUP_ID=$(id -g)
 
 mkdir -p ./volumes/pictrs
 
-docker-compose up --build
+docker-compose build --pull
+docker-compose run --service-ports pictrs

@@ -1,12 +1,8 @@
-# Target environment
-FROM amd64/ubuntu:20.04 as target-env
-
-ENV \
- TARGET=x86_64-unknown-linux-gnu \
- BUILD_MODE=release
-
 # Basic cross-build environment
 FROM ubuntu:20.04 as cross-build
+
+ARG UID=1000
+ARG GID=1000
 
 ENV \
  ARCH=amd64 \
@@ -32,12 +28,12 @@ ENV \
 RUN \
  sed 's/http:\/\/\(.*\).ubuntu.com\/ubuntu\//[arch-=amd64,i386] http:\/\/ports.ubuntu.com\/ubuntu-ports\//g' /etc/apt/sources.list > /etc/apt/sources.list.d/ports.list && \
  sed -i 's/http:\/\/\(.*\).ubuntu.com\/ubuntu\//[arch=amd64,i386] http:\/\/\1.archive.ubuntu.com\/ubuntu\//g' /etc/apt/sources.list && \
- addgroup --gid 991 build && \
+ addgroup --gid $GID build && \
  adduser \
     --disabled-password \
     --gecos "" \
     --ingroup build \
-    --uid 991 \
+    --uid $UID \
     --home /opt/build \
     build && \
  dpkg --add-architecture $ARCH && \
@@ -129,7 +125,13 @@ RUN \
     libltdl7:$ARCH \
     llvm-dev \
     libclang-dev \
-    clang
+    clang \
+    libpng16-16:$ARCH \
+    libjpeg8:$ARCH \
+    libwebp6:$ARCH \
+    libwebpdemux2:$ARCH \
+    libwebpmux3:$ARCH \
+    libgomp1:$ARCH
 
 ENV \
  PATH=$PATH:/opt/build/.cargo/bin \
@@ -149,64 +151,7 @@ COPY --from=imagemagick-builder /usr/local/ /usr/local
 
 USER build
 
-WORKDIR /opt/build
-
 RUN \
- USER=build cargo new repo
+ mkdir -p /opt/build/repo
 
 WORKDIR /opt/build/repo
-
-COPY --chown=build:build Cargo.toml Cargo.lock ./
-
-RUN \
- mkdir -p ./src && \
- echo 'fn main() { println!("Dummy") }' > ./src/main.rs && \
- USER=build cargo build --$BUILD_MODE && \
- rm -rf ./src && \
- rm -rf ./target/$BUILD_MODE/deps/pict_rs-*
-
-COPY --chown=build:build src ./src/
-
-RUN \
- cargo build --$BUILD_MODE --frozen
-
-# Producing target binary
-FROM target-env
-
-ARG UID=991
-ARG GID=991
-
-RUN \
- addgroup --gid $GID pictrs && \
- adduser \
-    --disabled-password \
-    --gecos "" \
-    --ingroup pictrs \
-    --uid $UID \
-    --home /opt/pict-rs \
-    pictrs && \
- apt-get update && \
- apt-get upgrade -y && \
- apt-get install -y \
-    libgexiv2-2 \
-    libpng16-16 \
-    libjpeg8 \
-    libwebp6 \
-    libwebpdemux2 \
-    libwebpmux3 \
-    libltdl7 \
-    libgomp1 \
-    libxml2 \
-    tini
-
-COPY --from=pict-rs-builder /opt/build/repo/target/$BUILD_MODE/pict-rs /usr/local/bin/pict-rs
-COPY --from=imagemagick-builder /usr/local /usr/local
-
-ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib
-
-VOLUME /mnt
-WORKDIR /opt/pict-rs
-USER pictrs
-EXPOSE 8080
-ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["/usr/local/bin/pict-rs", "-p", "/mnt"]

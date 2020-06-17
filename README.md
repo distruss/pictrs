@@ -44,20 +44,23 @@ $ ./pict-rs -a 127.0.0.1:8080 -p data/ -w thumbnail identity
 Run the following commands:
 ```
 # Create a folder for the files (anywhere works)
-mkdir ./pict-rs
-cd ./pict-rs
-mkdir -p volumes/pictrs
-sudo chown -R 991:991 volumes/pictrs
-wget https://git.asonix.dog/asonix/pict-rs/raw/branch/master/docker/prod/docker-compose.yml
-sudo docker-compose up -d
+$ mkdir ./pict-rs
+$ cd ./pict-rs
+$ mkdir -p volumes/pictrs
+$ sudo chown -R 991:991 volumes/pictrs
+$ wget https://git.asonix.dog/asonix/pict-rs/raw/branch/master/docker/prod/docker-compose.yml
+$ sudo docker-compose up -d
 ```
 
 #### Docker Development
-Run the following to develop in docker:
+The development system loads a rust environment inside a docker container with the neccessary
+dependencies already present
 ```
-git clone https://git.asonix.dog/asonix/pict-rs
-cd pict-rs/docker/dev
-./dev.sh
+$ git clone https://git.asonix.dog/asonix/pict-rs
+$ cd pict-rs/docker/dev
+$ ./dev.sh
+$ cargo build
+$ cargo run
 ```
 
 ### API
