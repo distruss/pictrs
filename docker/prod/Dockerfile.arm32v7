@@ -149,7 +149,7 @@ COPY --from=rust --chown=build:build /opt/build/.cargo /opt/build/.cargo
 COPY --from=rust --chown=build:build /opt/build/.rustup /opt/build/.rustup
 COPY --from=imagemagick-builder /usr/local/ /usr/local
 
-ARG TAG=master
+ARG TAG=main
 ARG GIT_REPOSITORY=https://git.asonix.dog/asonix/pict-rs
 
 ADD --chown=build:build $GIT_REPOSITORY/archive/$TAG.tar.gz /opt/build/$TAG.tar.gz
