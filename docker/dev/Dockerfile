@@ -79,6 +79,7 @@ RUN \
     --disable-docs \
     --prefix=/usr/local \
     --with-utilities=no \
+    --with-magick-plus-plus=no \
     --without-perl \
     --with-xml=yes \
     --with-png=yes \
