@@ -12,7 +12,7 @@ edition = "2018"
 
 [dependencies]
 actix-form-data = { git = "https://git.asonix.dog/Aardwolf/actix-form-data" }
-actix-fs = { git = "https://git.asonix.dog/asonix/actix-fs" }
+actix-fs = { git = "https://git.asonix.dog/asonix/actix-fs", branch = "main" }
 actix-rt = "1.1.1"
 actix-web = { version = "3.0.0-alpha.2", features = ["rustls"] }
 anyhow = "1.0"
